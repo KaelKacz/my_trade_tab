@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<content id="my_trade_tab" name="Station Trade Data Tab" description="PoC for UI Mod" author="You" version="100" date="2026-04-28" save="0">
+    <text language="44" name="Station Trade Data Tab" description="PoC for UI Mod" />
+    <dependency id="kuerteeUIExtensionsAndHUD" optional="false" name="kuertee UI Extensions and HUD" version="804"></dependency>
+    <dependency id="ws_2042901274" optional="false" name="SirNukes Mod Support APIs" version="195"></dependency>
+</content>

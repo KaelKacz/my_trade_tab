@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mdscript name="Trade_Data_Registry" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="md.xsd">
+  <cues>
+    <cue name="Bootstrap_On_Userdata_Ready" instantiate="true">
+      <conditions>
+        <event_ui_triggered screen="'Userdata'" control="'Ready'" />
+      </conditions>
+      <actions>
+        <include_actions ref="Refresh_Active_Station_Registry" />
+      </actions>
+    </cue>
+
+    <cue name="Refresh_On_Player_Discovery" instantiate="true">
+      <conditions>
+        <event_player_discovered_object />
+      </conditions>
+      <actions>
+        <include_actions ref="Refresh_Active_Station_Registry" />
+      </actions>
+    </cue>
+
+    <cue name="Refresh_On_Player_Detection" instantiate="true">
+      <conditions>
+        <event_player_detected_object />
+      </conditions>
+      <actions>
+        <include_actions ref="Refresh_Active_Station_Registry" />
+      </actions>
+    </cue>
+
+    <cue name="Refresh_On_Trade_Discovery" instantiate="true">
+      <conditions>
+        <event_player_trade_discovered />
+      </conditions>
+      <actions>
+        <include_actions ref="Refresh_Active_Station_Registry" />
+      </actions>
+    </cue>
+
+    <library name="Refresh_Active_Station_Registry" purpose="include_actions">
+      <actions>
+        <set_value name="$Registry" exact="[]" />
+        <find_station name="$Stations" space="player.galaxy" multiple="true" checkoperational="false" />
+        <do_for_each name="$Station" in="$Stations">
+          <do_if value="$Station.exists and ($Station.isplayerowned or $Station.isinliveview or $Station.tradesubscription)">
+            <append_to_list name="$Registry" exact="$Station" />
+          </do_if>
+        </do_for_each>
+        <set_value name="player.entity.$my_trade_tab_station_registry" exact="$Registry" />
+        <raise_lua_event name="'my_trade_tab.station_registry_updated'" />
+      </actions>
+    </library>
+  </cues>
+</mdscript>
