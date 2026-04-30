@@ -15,6 +15,9 @@ local tradeTab = {
   stationCache = {},
   cachedDataset = nil,
   datasetDirty = true,
+  tableState = {
+    topRow = nil,
+  },
   filters = {
     mode = "best",
     ware = "__all__",
@@ -36,15 +39,6 @@ end
 local function safeSector(component)
   local sector = GetComponentData(component, "sector")
   return (sector and sector ~= "") and sector or "Unknown Sector"
-end
-
-local function safeOwner(component)
-  local owner = GetComponentData(component, "owner")
-  if owner and owner ~= "" then
-    local ownerName = GetFactionData(owner, "name")
-    return (ownerName and ownerName ~= "") and ownerName or owner
-  end
-  return ""
 end
 
 local function wareName(ware)
@@ -83,6 +77,44 @@ end
 
 local function amountText(value)
   return ConvertIntegerString(math.floor(value or 0), true, 0, true)
+end
+
+local function demandPercentValue(ware, price)
+  local avgPrice = tonumber(GetWareData(ware, "avgprice")) or 0
+  local numericPrice = tonumber(price) or 0
+  if avgPrice == 0 then
+    return 0
+  end
+  return ((numericPrice / avgPrice) - 1) * 100
+end
+
+local function demandValueText(ware, price, isbuyoffer)
+  local demandPct = demandPercentValue(ware, price)
+  if demandPct == 0 then
+    return "0.0%"
+  end
+
+  local rounded
+  if isbuyoffer then
+    rounded = math.floor(demandPct * 10 + 0.0001) / 10
+  else
+    rounded = math.ceil(demandPct * 10 - 0.0001) / 10
+  end
+
+  return string.format("%+.1f%%", rounded)
+end
+
+local function demandColor(ware, price, isbuyoffer)
+  local demandPct = demandPercentValue(ware, price)
+  if demandPct == 0 then
+    return Color["text_normal"]
+  end
+
+  if isbuyoffer then
+    return (demandPct > 0) and Color["text_price_good"] or Color["text_price_bad"]
+  end
+
+  return (demandPct > 0) and Color["text_price_bad"] or Color["text_price_good"]
 end
 
 local function percentText(buyPrice, sellPrice)
@@ -126,19 +158,14 @@ end
 
 local function refresh()
   if tradeTab.menuMap and tradeTab.menuMap.refreshInfoFrame then
+    local tableId = tradeTab.menuMap.infoTable
+    if tableId then
+      local topRow = GetTopRow(tableId)
+      tradeTab.tableState.topRow = topRow
+      tradeTab.menuMap.settoprow = topRow
+    end
     tradeTab.menuMap.refreshInfoFrame()
   end
-end
-
-local function focusStation(stationId)
-  if not tradeTab.menuMap or not stationId then
-    return
-  end
-  local station64 = ConvertIDTo64Bit(stationId)
-  if tradeTab.menuMap.holomap and tradeTab.menuMap.holomap ~= 0 then
-    C.SetFocusMapComponent(tradeTab.menuMap.holomap, station64, true)
-  end
-  tradeTab.menuMap.setInfoSubmenuObjectAndRefresh(station64)
 end
 
 local function openStationContextMenu(stationId)
@@ -165,10 +192,6 @@ local function openStationContextMenu(stationId)
     mouseY = mousepos.y,
     behaviourInspectionComponent = menu.behaviourInspectionComponent,
   })
-end
-
-local function ensureObjectTab()
-  return
 end
 
 local function indentText(level, text)
@@ -367,7 +390,6 @@ local function buildTradeDataset()
         stations[tostring(stationId)] = {
           id = stationId,
           name = safeName(stationId),
-          owner = safeOwner(stationId),
           state = state,
           sector = sectorName,
           buys = buys,
@@ -514,45 +536,49 @@ local function getVisibleRows(station)
   if tradeTab.filters.mode == "sells" then
     for _, offer in ipairs(station.sells) do
       if tradeTab.filters.ware == "__all__" or offer.ware == tradeTab.filters.ware then
-        local bestText = "No better buyer found"
-        for _, row in ipairs(station.rows) do
-          if row.kind == "sell" and row.ware == offer.ware then
-            bestText = safeName(row.targetId) .. " +" .. moneyText(row.profit)
-            break
-          end
-        end
         table.insert(rows, {
-          summary = string.format(
-            "Sell %s at %s, amount %s, best buyer: %s",
-            wareName(offer.ware),
-            moneyText(offer.price),
-            amountText(offer.amount),
-            bestText
-          )
+          ware = offer.ware,
+          amount = offer.amount,
+          price = offer.price,
+          isbuyoffer = false,
         })
       end
     end
+
+    table.sort(rows, function(a, b)
+      local aDemand = demandPercentValue(a.ware, a.price)
+      local bDemand = demandPercentValue(b.ware, b.price)
+      if aDemand == bDemand then
+        if a.price == b.price then
+          return wareName(a.ware) < wareName(b.ware)
+        end
+        return a.price < b.price
+      end
+      return aDemand < bDemand
+    end)
   else
     for _, offer in ipairs(station.buys) do
       if tradeTab.filters.ware == "__all__" or offer.ware == tradeTab.filters.ware then
-        local bestText = "No better seller found"
-        for _, row in ipairs(station.rows) do
-          if row.kind == "buy" and row.ware == offer.ware then
-            bestText = safeName(row.sourceId) .. " +" .. moneyText(row.profit)
-            break
-          end
-        end
         table.insert(rows, {
-          summary = string.format(
-            "Buy %s at %s, amount %s, best seller: %s",
-            wareName(offer.ware),
-            moneyText(offer.price),
-            amountText(offer.amount),
-            bestText
-          )
+          ware = offer.ware,
+          amount = offer.amount,
+          price = offer.price,
+          isbuyoffer = true,
         })
       end
     end
+
+    table.sort(rows, function(a, b)
+      local aDemand = demandPercentValue(a.ware, a.price)
+      local bDemand = demandPercentValue(b.ware, b.price)
+      if aDemand == bDemand then
+        if a.price == b.price then
+          return wareName(a.ware) < wareName(b.ware)
+        end
+        return a.price > b.price
+      end
+      return aDemand > bDemand
+    end)
   end
 
   return rows
@@ -750,60 +776,36 @@ local function renderFilters(objecttable, dataset, maxIcons)
     labelRow[8]:createText("PPU", { halign = "right", color = Color["text_normal"], fontsize = fontSize })
     labelRow[9]:createText("%", { halign = "right", color = Color["text_normal"], fontsize = fontSize })
     rowsAdded = rowsAdded + 1
+  elseif tradeTab.filters.mode == "sells" then
+    local labelRow = objecttable:addRow("trade_sell_labels", {
+      fixed = true,
+      bgColor = Color["row_background_unselectable"],
+      interactive = false,
+    })
+    labelRow[1]:setColSpan(6):createText("Ware", { color = Color["text_normal"], fontsize = fontSize })
+    labelRow[7]:createText("Qty", { halign = "right", color = Color["text_normal"], fontsize = fontSize })
+    labelRow[8]:createText("Price", { halign = "right", color = Color["text_normal"], fontsize = fontSize })
+    labelRow[9]:createText("Demand", { halign = "right", color = Color["text_normal"], fontsize = fontSize })
+    rowsAdded = rowsAdded + 1
+  else
+    local labelRow = objecttable:addRow("trade_buy_labels", {
+      fixed = true,
+      bgColor = Color["row_background_unselectable"],
+      interactive = false,
+    })
+    labelRow[1]:setColSpan(6):createText("Ware", { color = Color["text_normal"], fontsize = fontSize })
+    labelRow[7]:createText("Qty", { halign = "right", color = Color["text_normal"], fontsize = fontSize })
+    labelRow[8]:createText("Price", { halign = "right", color = Color["text_normal"], fontsize = fontSize })
+    labelRow[9]:createText("Demand", { halign = "right", color = Color["text_normal"], fontsize = fontSize })
+    rowsAdded = rowsAdded + 1
   end
 
   return rowsAdded
 end
 
-local function applyTradeColumnWidths(objecttable, maxIcons)
-  if not objecttable or not objecttable.columndata or not objecttable.columndata.final then
-    return
-  end
-
-  local nonToggleWidth = 0
-  for col = 2, 10 do
-    local coldata = objecttable.columndata[col]
-    if coldata and coldata.width then
-      nonToggleWidth = nonToggleWidth + coldata.width
-    end
-  end
-  if nonToggleWidth <= 0 then
-    return
-  end
-
-  -- Column 1 is the expand/collapse button and stays fixed.
-  -- Reallocate the finalized pixel widths directly:
-  -- cols 2-5 are the ware block, cols 6-10 are numeric.
-  local wareBlockWidth = math.floor(nonToggleWidth * 0.34)
-  local numericBlockWidth = nonToggleWidth - wareBlockWidth
-  local wareColWidth = math.floor(wareBlockWidth / 4)
-  local numericColWidth = math.floor(numericBlockWidth / 5)
-
-  local usedWidth = 0
-  for col = 2, 5 do
-    objecttable.columndata[col].width = wareColWidth
-    usedWidth = usedWidth + wareColWidth
-  end
-  for col = 6, 10 do
-    objecttable.columndata[col].width = numericColWidth
-    usedWidth = usedWidth + numericColWidth
-  end
-
-  -- Put rounding leftovers into the last numeric column so we preserve
-  -- the total table width exactly.
-  objecttable.columndata[10].width = objecttable.columndata[10].width + (nonToggleWidth - usedWidth)
-end
-
 local function renderStationRow(objecttable, station, maxIcons, numDisplayed)
   local totalCols = 4 + maxIcons
   local detailRows = getVisibleRows(station)
-  local summary
-
-  if tradeTab.filters.mode == "sells" then
-    summary = string.format("%s sell offers", tostring(#detailRows))
-  elseif tradeTab.filters.mode == "buys" then
-    summary = string.format("%s buy offers", tostring(#detailRows))
-  end
 
   local row = objecttable:addRow({ "trade_station", station.id }, {
     bgColor = Color["row_background_blue"],
@@ -812,22 +814,18 @@ local function renderStationRow(objecttable, station, maxIcons, numDisplayed)
     row[1]:setColSpan(totalCols):createButton({
       bgColor = Color["button_background_hidden"],
       highlightColor = Color["button_highlight_hidden"],
-    }):setText(trimText(station.name, 70), { mouseOverText = station.name, halign = "left" })
+    }):setText(trimText(station.name, 70), { halign = "left" })
     row[1].handlers.onRightClick = function()
       openStationContextMenu(station.id)
     end
   else
-    row[1]:setColSpan(3):createButton({
+    row[1]:setColSpan(totalCols):createButton({
       bgColor = Color["button_background_hidden"],
       highlightColor = Color["button_highlight_hidden"],
-    }):setText(trimText(station.name, 42), { mouseOverText = station.name, halign = "left" })
+    }):setText(trimText(station.name, 70), { halign = "left" })
     row[1].handlers.onRightClick = function()
       openStationContextMenu(station.id)
     end
-    row[4]:setColSpan(totalCols - 3):createText(
-      trimText(station.sector .. " | " .. summary, 90),
-      { halign = "right", mouseOverText = station.sector .. " | " .. summary }
-    )
   end
   numDisplayed = numDisplayed + 1
 
@@ -838,7 +836,7 @@ local function renderStationRow(objecttable, station, maxIcons, numDisplayed)
       buyerRow[1]:setColSpan(totalCols):createButton({
         bgColor = Color["button_background_hidden"],
         highlightColor = Color["button_highlight_hidden"],
-      }):setText(trimText(indentText(1, buyerGroup.name), 72), { mouseOverText = buyerGroup.name, halign = "left" })
+      }):setText(trimText(indentText(1, buyerGroup.name), 72), { halign = "left" })
       buyerRow[1].handlers.onRightClick = function()
         openStationContextMenu(buyerGroup.id)
       end
@@ -879,32 +877,46 @@ local function renderStationRow(objecttable, station, maxIcons, numDisplayed)
     end
   else
     for _, tradeRow in ipairs(detailRows) do
-      local text = tradeRow.summary
-      if not text then
-        text = string.format(
-          "%s -> %s | %s | buy %s | sell %s | %s | amount %s",
-          safeName(tradeRow.sourceId),
-          safeName(tradeRow.targetId),
-          wareName(tradeRow.ware),
-          moneyText(tradeRow.buyPrice),
-          moneyText(tradeRow.sellPrice),
-          percentText(tradeRow.buyPrice, tradeRow.sellPrice),
-          amountText(tradeRow.amount)
-        )
-      end
-
       local child = objecttable:addRow(false, {
         interactive = false,
       })
-      child[1]:setColSpan(totalCols):createText(
-        "    " .. trimText(text, 150),
-        { mouseOverText = text }
+      child[1]:setColSpan(6):createText(
+        trimText(indentText(1, wareName(tradeRow.ware)), 68),
+        { color = Color["text_warning"] }
+      )
+      child[7]:createText(
+        amountText(tradeRow.amount),
+        { halign = "right", color = Color["text_normal"] }
+      )
+      child[8]:createText(
+        compactMoneyText(tradeRow.price),
+        { halign = "right", color = Color["text_normal"] }
+      )
+      child[9]:createText(
+        demandValueText(tradeRow.ware, tradeRow.price, tradeRow.isbuyoffer),
+        { halign = "right", color = demandColor(tradeRow.ware, tradeRow.price, tradeRow.isbuyoffer) }
       )
       numDisplayed = numDisplayed + 1
     end
   end
 
   return numDisplayed
+end
+
+local function restoreTableState(objecttable)
+  local menu = tradeTab.menuMap
+  if not objecttable or not menu then
+    return
+  end
+
+  local topRow = menu.settoprow or tradeTab.tableState.topRow
+  if topRow then
+    debug("restoreTableState applying topRow=" .. tostring(topRow))
+    objecttable:setTopRow(topRow)
+    tradeTab.tableState.topRow = topRow
+  else
+    debug("restoreTableState found no topRow")
+  end
 end
 
 local function createSideBar(config)
@@ -935,6 +947,17 @@ local function createTradeFrame(frame)
   end
 
   local ok, err = pcall(function()
+    local previousTableId = menu.infoTable
+    local previousTopRow = nil
+    if previousTableId then
+      previousTopRow = GetTopRow(previousTableId)
+    end
+    debug("createTradeFrame begin previousTableId=" .. tostring(previousTableId) .. " previousTopRow=" .. tostring(previousTopRow) .. " menuSetTopRow=" .. tostring(menu.settoprow) .. " savedTopRow=" .. tostring(tradeTab.tableState.topRow))
+
+    if menu.infoTable then
+      tradeTab.tableState.topRow = GetTopRow(menu.infoTable)
+    end
+
     local objecttable = frame:addTable(9, {
       tabOrder = 1,
       skipTabChange = true,
@@ -985,6 +1008,10 @@ local function createTradeFrame(frame)
       local empty = objecttable:addRow(false, { interactive = false })
       empty[1]:setColSpan(4 + maxIcons):createText("-- No matching trade stations found --")
     end
+
+    restoreTableState(objecttable)
+    menu.settoprow = nil
+    debug("createTradeFrame end restoredTopRow=" .. tostring(tradeTab.tableState.topRow))
   end)
 
   if not ok then
@@ -1004,6 +1031,11 @@ end
 
 local function onStationRegistryUpdated()
   if tradeTab.menuMap and tradeTab.menuMap.infoTableMode == MODE then
+    if tradeTab.menuMap.infoTable then
+      local topRow = GetTopRow(tradeTab.menuMap.infoTable)
+      tradeTab.tableState.topRow = topRow
+      tradeTab.menuMap.settoprow = topRow
+    end
     tradeTab.datasetDirty = true
   end
 end

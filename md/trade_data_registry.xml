@@ -42,7 +42,7 @@
         <set_value name="$Registry" exact="[]" />
         <find_station name="$Stations" space="player.galaxy" multiple="true" checkoperational="false" />
         <do_for_each name="$Station" in="$Stations">
-          <do_if value="$Station.exists and ($Station.isplayerowned or $Station.isinliveview or $Station.tradesubscription)">
+          <do_if value="$Station.exists and ($Station.isplayerowned or $Station.isinliveview)">
             <append_to_list name="$Registry" exact="$Station" />
           </do_if>
         </do_for_each>
