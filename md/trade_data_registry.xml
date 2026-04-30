@@ -37,6 +37,24 @@
       </actions>
     </cue>
 
+    <cue name="Refresh_Gate_Distance_Filter_On_UI_Request" instantiate="true">
+      <conditions>
+        <event_ui_triggered screen="'MapMenu'" control="'my_trade_tab_gate_distance_filter_changed'" />
+      </conditions>
+      <actions>
+        <include_actions ref="Refresh_Gate_Distance_Filter" />
+      </actions>
+    </cue>
+
+    <cue name="Refresh_Trade_Distance_Cache_On_UI_Request" instantiate="true">
+      <conditions>
+        <event_ui_triggered screen="'MapMenu'" control="'my_trade_tab_trade_distance_cache_changed'" />
+      </conditions>
+      <actions>
+        <include_actions ref="Refresh_Trade_Distance_Cache" />
+      </actions>
+    </cue>
+
     <library name="Refresh_Active_Station_Registry" purpose="include_actions">
       <actions>
         <set_value name="$Registry" exact="[]" />
@@ -48,6 +66,37 @@
         </do_for_each>
         <set_value name="player.entity.$my_trade_tab_station_registry" exact="$Registry" />
         <raise_lua_event name="'my_trade_tab.station_registry_updated'" />
+      </actions>
+    </library>
+
+    <library name="Refresh_Gate_Distance_Filter" purpose="include_actions">
+      <actions>
+        <set_value name="$AllowedSectors" exact="[]" />
+        <set_value name="$OriginSector" exact="component.{event.param3}" />
+        <set_value name="$MaxGateDistance" exact="player.entity.$my_trade_tab_max_gate_distance" />
+        <do_if value="$OriginSector and $OriginSector.exists and ($MaxGateDistance != null) and ($MaxGateDistance ge 0)">
+          <find_sector_in_range name="$AllowedSectors" object="$OriginSector" mindistance="0" maxdistance="$MaxGateDistance" multiple="true" />
+        </do_if>
+        <set_value name="player.entity.$my_trade_tab_gate_distance_sectors" exact="$AllowedSectors" />
+        <raise_lua_event name="'my_trade_tab.gate_distance_updated'" />
+      </actions>
+    </library>
+
+    <library name="Refresh_Trade_Distance_Cache" purpose="include_actions">
+      <actions>
+        <set_value name="$SourceSector" exact="component.{event.param3}" />
+        <do_if value="$SourceSector and $SourceSector.exists">
+          <set_value name="$DistanceTable" exact="table[]" />
+          <find_sector_in_range distances="$DistanceTable" object="$SourceSector" multiple="true" />
+          <do_if value="not $DistanceTable.{$SourceSector}?">
+            <set_value name="$DistanceTable.{$SourceSector}" exact="0" />
+          </do_if>
+          <do_if value="not player.entity.$my_trade_tab_trade_distance_cache?">
+            <set_value name="player.entity.$my_trade_tab_trade_distance_cache" exact="table[]" />
+          </do_if>
+          <set_value name="player.entity.$my_trade_tab_trade_distance_cache.{$SourceSector}" exact="$DistanceTable" />
+        </do_if>
+        <raise_lua_event name="'my_trade_tab.trade_distance_updated'" param="event.param3" />
       </actions>
     </library>
   </cues>

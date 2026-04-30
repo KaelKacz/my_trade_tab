@@ -3,8 +3,8 @@
   <environment type="menus">
     <dependency name="ego_detailmonitor" />
     <dependency name="ego_interactmenu" />
-    <dependency name="sn_mod_support_apis" />
     <dependency name="kuertee_ui_extensions" />
+    <dependency name="sn_mod_support_apis" />
     <file name="ui/trade_data_tab.lua" />
   </environment>
 </addon>

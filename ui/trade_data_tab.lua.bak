@@ -29,12 +29,10 @@ local tradeTab = {
     originSector = nil,
     maxGateDistance = "0",
     maxTradeDistance = "0",
-    cargoVolume = "5000",
   },
 }
 
 local getReachableSectors
-local wareVolumeCache = {}
 
 local function debug(msg)
   if type(DebugError) == "function" then
@@ -145,18 +143,6 @@ local function wareName(ware)
   return (name and name ~= "") and name or tostring(ware)
 end
 
-local function wareVolume(ware)
-  local key = tostring(ware)
-  if wareVolumeCache[key] ~= nil then
-    return wareVolumeCache[key]
-  end
-
-  local volume = tonumber(GetWareData(ware, "volume")) or 1
-  volume = math.max(1, volume)
-  wareVolumeCache[key] = volume
-  return volume
-end
-
 local function fixedMoneyNumber(value)
   local credits = tonumber(value) or 0
   local negative = credits < 0
@@ -178,49 +164,16 @@ local function fixedMoneyNumber(value)
   return result
 end
 
-local function compactNumberText(value, decimals)
-  local numeric = tonumber(value) or 0
-  local negative = numeric < 0
-  local absolute = math.abs(numeric)
-  local suffix = ""
-  local scaled = absolute
-
-  if absolute >= 1000000000 then
-    scaled = absolute / 1000000000
-    suffix = "b"
-  elseif absolute >= 1000000 then
-    scaled = absolute / 1000000
-    suffix = "m"
-  elseif absolute >= 1000 then
-    scaled = absolute / 1000
-    suffix = "k"
-  end
-
-  if suffix == "" then
-    local whole = math.floor(absolute + 0.5)
-    return (negative and "-" or "") .. ConvertIntegerString(whole, true, 0, true)
-  end
-
-  local precision = decimals or 1
-  local text = string.format("%." .. tostring(precision) .. "f", scaled)
-  text = text:gsub("%.?0+$", "")
-  return (negative and "-" or "") .. text .. suffix
+local function moneyText(value)
+  return fixedMoneyNumber(value) .. " " .. ReadText(1001, 101)
 end
 
 local function compactMoneyText(value)
-  return compactNumberText(value, 1)
-end
-
-local function amountText(value)
-  return compactNumberText(value, 1)
-end
-
-local function exactMoneyText(value)
   return fixedMoneyNumber(value)
 end
 
-local function exactAmountText(value)
-  return ConvertIntegerString(math.floor((tonumber(value) or 0) + 0.5), true, 0, true)
+local function amountText(value)
+  return ConvertIntegerString(math.floor(value or 0), true, 0, true)
 end
 
 local function demandPercentValue(ware, price)
@@ -261,35 +214,40 @@ local function demandColor(ware, price, isbuyoffer)
   return (demandPct > 0) and Color["text_price_bad"] or Color["text_price_good"]
 end
 
-local function totalProfitValue(buyPrice, sellPrice, amount)
+local function percentText(buyPrice, sellPrice)
   local buy = tonumber(buyPrice) or 0
   local sell = tonumber(sellPrice) or 0
-  local moveAmount = math.max(0, tonumber(amount) or 0)
-  return math.max(0, sell - buy) * moveAmount
+  if buy <= 0 or sell <= buy then
+    return "+0%"
+  end
+  local pct = ((sell - buy) / buy) * 100
+  return string.format("+%.0f%%", pct)
 end
 
-local function totalProfitText(buyPrice, sellPrice, amount)
-  return compactMoneyText(totalProfitValue(buyPrice, sellPrice, amount))
+local function profitPerUnitText(buyPrice, sellPrice)
+  local buy = tonumber(buyPrice) or 0
+  local sell = tonumber(sellPrice) or 0
+  return compactMoneyText(math.max(0, sell - buy))
 end
 
-local function profitPerJumpText(buyPrice, sellPrice, amount, routeDistance)
+local function profitPerJumpText(buyPrice, sellPrice, routeDistance)
   local jumps = tonumber(routeDistance)
   if jumps == nil then
     return "-"
   end
 
-  local profit = totalProfitValue(buyPrice, sellPrice, amount)
+  local profit = math.max(0, (tonumber(sellPrice) or 0) - (tonumber(buyPrice) or 0))
   local divisor = math.max(1, math.floor(jumps))
   return compactMoneyText(profit / divisor)
 end
 
-local function profitPerJumpValue(buyPrice, sellPrice, amount, routeDistance)
+local function profitPerJumpValue(buyPrice, sellPrice, routeDistance)
   local jumps = tonumber(routeDistance)
   if jumps == nil then
     return -1
   end
 
-  local profit = totalProfitValue(buyPrice, sellPrice, amount)
+  local profit = math.max(0, (tonumber(sellPrice) or 0) - (tonumber(buyPrice) or 0))
   local divisor = math.max(1, math.floor(jumps))
   return profit / divisor
 end
@@ -302,38 +260,19 @@ local function jumpsText(routeDistance)
   return tostring(math.max(0, math.floor(jumps)))
 end
 
-local function tripAmountValue(ware, amount)
-  local fullAmount = math.max(0, tonumber(amount) or 0)
-  local availableVolume = tonumber(tradeTab.filters.cargoVolume)
-  if availableVolume == nil or availableVolume <= 0 then
-    return fullAmount
+local function profitPercentValue(buyPrice, sellPrice)
+  local buy = tonumber(buyPrice) or 0
+  local sell = tonumber(sellPrice) or 0
+  if buy <= 0 or sell <= buy then
+    return 0
   end
-
-  local unitsPerTrip = math.floor(availableVolume / wareVolume(ware))
-  return math.max(0, math.min(fullAmount, unitsPerTrip))
+  return ((sell - buy) / buy) * 100
 end
 
-local function tripAmountText(tripAmount, fullAmount)
-  local trip = math.max(0, tonumber(tripAmount) or 0)
-  local full = math.max(0, tonumber(fullAmount) or 0)
-  if trip >= full then
-    return amountText(full)
-  end
-  return amountText(trip) .. "/" .. amountText(full)
-end
-
-local function tripAmountMouseOverText(tripAmount, fullAmount)
-  local trip = math.max(0, tonumber(tripAmount) or 0)
-  local full = math.max(0, tonumber(fullAmount) or 0)
-  if trip >= full then
-    return exactAmountText(full)
-  end
-  return exactAmountText(trip) .. "/" .. exactAmountText(full)
-end
-
-local function normalizeCargoVolume(value)
-  local numericValue = tonumber(value) or 0
-  return tostring(math.max(0, math.min(100000, math.floor(numericValue + 0.5))))
+local function movableAmountText(sourceAmount, targetAmount)
+  local sellAmount = tonumber(sourceAmount) or 0
+  local buyAmount = tonumber(targetAmount) or 0
+  return amountText(math.min(sellAmount, buyAmount))
 end
 
 local function trimText(text, maxLen)
@@ -461,7 +400,7 @@ local function collectRegistryStationIDs()
 end
 
 local function getGateDistanceSectorFilter()
-  if not tradeTab.filters.originSector then
+  if tradeTab.filters.originSector == "__all__" or tradeTab.filters.maxGateDistance == "__all__" then
     return nil
   end
 
@@ -515,7 +454,7 @@ local function buildFilterContext()
     reachable = nil,
   }
 
-  if tradeTab.filters.originSector then
+  if tradeTab.filters.originSector and tradeTab.filters.originSector ~= "__all__" and tradeTab.filters.maxGateDistance ~= "__all__" then
     context.originSectorId = normalizeLuaID(tradeTab.filters.originSector)
     if context.originSectorId and (not context.allowedSectors) then
       local maxGateDistance = tonumber(tradeTab.filters.maxGateDistance) or 0
@@ -584,6 +523,7 @@ local function requestTradeDistanceCacheUpdate(sourceSectorId)
 
   tradeTab.tradeDistanceCachePending[sourceKey] = true
   tradeTab.tradeDistanceRequestsRemaining = math.max(0, (tradeTab.tradeDistanceRequestsRemaining or 0) - 1)
+  debug("requestTradeDistanceCacheUpdate sourceSectorId=" .. sourceKey)
   AddUITriggeredEvent("MapMenu", "my_trade_tab_trade_distance_cache_changed", normalizedSource)
 end
 
@@ -594,7 +534,7 @@ tradeTab.requestGateDistanceFilterUpdate = function()
     return
   end
 
-  if not tradeTab.filters.originSector then
+  if tradeTab.filters.originSector == "__all__" or tradeTab.filters.maxGateDistance == "__all__" then
     tradeTab.gateDistanceFilterPending = false
     SetNPCBlackboard(playerId64, "$my_trade_tab_origin_sector", nil)
     SetNPCBlackboard(playerId64, "$my_trade_tab_max_gate_distance", nil)
@@ -612,9 +552,11 @@ tradeTab.requestGateDistanceFilterUpdate = function()
     return
   end
 
+  local originSector64 = ConvertIDTo64Bit(originSectorId)
   tradeTab.gateDistanceFilterPending = true
   SetNPCBlackboard(playerId64, "$my_trade_tab_origin_sector", originSectorId)
   SetNPCBlackboard(playerId64, "$my_trade_tab_max_gate_distance", maxGateDistance)
+  debug("requestGateDistanceFilterUpdate originSectorId=" .. tostring(originSectorId) .. " originSector64=" .. tostring(originSector64) .. " maxGateDistance=" .. tostring(maxGateDistance))
   AddUITriggeredEvent("MapMenu", "my_trade_tab_gate_distance_filter_changed", originSectorId)
 end
 
@@ -650,11 +592,11 @@ local function collectRenderedStationIDs()
     if id64 and id64 ~= 0 then
       local classid = GetComponentData(id64, "classid")
       if Helper.isComponentClass(classid, "station") or Helper.isComponentClass(classid, "buildstorage") then
-        local stationId = ConvertStringToLuaID(tostring(id64))
-        stationId = normalizeLuaID(stationId)
-        if stationId and stationId ~= 0 then
-          table.insert(stationIds, stationId)
-        end
+      local stationId = ConvertStringToLuaID(tostring(id64))
+      stationId = normalizeLuaID(stationId)
+      if stationId and stationId ~= 0 then
+        table.insert(stationIds, stationId)
+      end
       end
     end
   end
@@ -826,6 +768,7 @@ end
 local function buildTradeDataset()
   local stationIds = collectCandidateStationIDs()
   local stations = {}
+  local bestBuyByWare = {}
   local buyOffersByWare = {}
   local wares = {}
   local sectors = {}
@@ -861,6 +804,14 @@ local function buildTradeDataset()
               price = entry.price,
               amount = entry.amount,
             })
+            local best = bestBuyByWare[entry.ware]
+            if (not best) or (entry.price > best.price) then
+              bestBuyByWare[entry.ware] = {
+                stationId = stationId,
+                price = entry.price,
+                amount = entry.amount,
+              }
+            end
           elseif entry.isselloffer then
             table.insert(sells, entry)
           end
@@ -883,6 +834,8 @@ local function buildTradeDataset()
           sector = sectorName,
           buys = buys,
           sells = sells,
+          bestProfit = 0,
+          rows = {},
         }
       end
     end
@@ -890,6 +843,53 @@ local function buildTradeDataset()
 
   local sectorGraph = buildSectorGraph(sectorIds)
   local routeDistanceCache = {}
+
+  for _, station in pairs(stations) do
+    for _, offer in ipairs(station.sells) do
+      local bestBuy = bestBuyByWare[offer.ware]
+      if bestBuy and bestBuy.stationId ~= station.id and bestBuy.price > offer.price then
+        local profit = bestBuy.price - offer.price
+        local amount = math.min(offer.amount, bestBuy.amount or offer.amount)
+        local targetStation = stations[tostring(bestBuy.stationId)]
+        local routeDistance = getSectorGateDistance(
+          station.sectorId,
+          targetStation and targetStation.sectorId or nil,
+          sectorGraph,
+          routeDistanceCache
+        )
+        table.insert(station.rows, {
+          kind = "sell",
+          ware = offer.ware,
+          sourceId = station.id,
+          targetId = bestBuy.stationId,
+          sourceSectorId = station.sectorId,
+          targetSectorId = targetStation and targetStation.sectorId or nil,
+          routeDistance = routeDistance,
+          buyPrice = offer.price,
+          sellPrice = bestBuy.price,
+          profit = profit,
+          profitPct = profitPercentValue(offer.price, bestBuy.price),
+          profitPerJump = profitPerJumpValue(offer.price, bestBuy.price, routeDistance),
+          amount = amount,
+          sourceAmount = offer.amount,
+          targetAmount = bestBuy.amount or offer.amount,
+        })
+        if station.rows[#station.rows].profitPerJump > station.bestProfit then
+          station.bestProfit = station.rows[#station.rows].profitPerJump
+        end
+      end
+    end
+
+    table.sort(station.rows, function(a, b)
+      if a.profitPerJump == b.profitPerJump then
+        if a.profit == b.profit then
+          return wareName(a.ware) < wareName(b.ware)
+        end
+        return a.profit > b.profit
+      end
+      return a.profitPerJump > b.profitPerJump
+    end)
+  end
 
   local wareOptions = {}
   for ware, name in pairs(wares) do
@@ -932,7 +932,12 @@ local function buildTradeDataset()
   for _, station in pairs(stations) do
     table.insert(stationList, station)
   end
-  table.sort(stationList, function(a, b) return a.name < b.name end)
+  table.sort(stationList, function(a, b)
+    if a.bestProfit == b.bestProfit then
+      return a.name < b.name
+    end
+    return a.bestProfit > b.bestProfit
+  end)
 
   return {
     stations = stationList,
@@ -962,11 +967,11 @@ local function getTradeDataset(forceRefresh)
 end
 
 local function bestTradeRowPassesFilter(row)
-  if (tonumber(row.tripAmount) or 0) <= 0 then
-    return false
+  local maxTradeDistance = tradeTab.filters.maxTradeDistance
+  if maxTradeDistance == "__all__" then
+    return true
   end
 
-  local maxTradeDistance = tradeTab.filters.maxTradeDistance
   local limit = tonumber(maxTradeDistance)
   if limit == nil then
     return true
@@ -1008,8 +1013,6 @@ local function buildBestTradeRowsForStation(station, frameCache)
     for _, candidate in ipairs(candidates) do
       if candidate.stationId ~= station.id and candidate.price > offer.price then
         local targetStation = dataset.stationById[tostring(candidate.stationId)]
-        local amount = math.min(offer.amount, candidate.amount or offer.amount)
-        local tripAmount = tripAmountValue(offer.ware, amount)
         local routeDistance = getSectorGateDistance(
           station.sectorId,
           targetStation and targetStation.sectorId or nil,
@@ -1026,17 +1029,16 @@ local function buildBestTradeRowsForStation(station, frameCache)
           routeDistance = routeDistance,
           buyPrice = offer.price,
           sellPrice = candidate.price,
-          totalProfit = totalProfitValue(offer.price, candidate.price, tripAmount),
-          profitPerJump = profitPerJumpValue(offer.price, candidate.price, tripAmount, routeDistance),
-          amount = amount,
-          tripAmount = tripAmount,
+          profit = candidate.price - offer.price,
+          profitPct = profitPercentValue(offer.price, candidate.price),
+          profitPerJump = profitPerJumpValue(offer.price, candidate.price, routeDistance),
+          amount = math.min(offer.amount, candidate.amount or offer.amount),
+          sourceAmount = offer.amount,
+          targetAmount = candidate.amount or offer.amount,
         }
 
         if bestTradeRowPassesFilter(row) then
-          if (not bestRow)
-            or row.profitPerJump > bestRow.profitPerJump
-            or (row.profitPerJump == bestRow.profitPerJump and row.totalProfit > bestRow.totalProfit)
-            or (row.profitPerJump == bestRow.profitPerJump and row.totalProfit == bestRow.totalProfit and row.tripAmount > bestRow.tripAmount) then
+          if (not bestRow) or row.profitPerJump > bestRow.profitPerJump or (row.profitPerJump == bestRow.profitPerJump and row.profit > bestRow.profit) then
             bestRow = row
           end
         end
@@ -1050,13 +1052,10 @@ local function buildBestTradeRowsForStation(station, frameCache)
 
   table.sort(rows, function(a, b)
     if a.profitPerJump == b.profitPerJump then
-      if a.totalProfit == b.totalProfit then
-        if a.tripAmount == b.tripAmount then
-          return wareName(a.ware) < wareName(b.ware)
-        end
-        return a.tripAmount > b.tripAmount
+      if a.profit == b.profit then
+        return wareName(a.ware) < wareName(b.ware)
       end
-      return a.totalProfit > b.totalProfit
+      return a.profit > b.profit
     end
     return a.profitPerJump > b.profitPerJump
   end)
@@ -1077,7 +1076,7 @@ local function stationPassesFilter(station, filterContext, frameCache)
     end
   end
 
-  if tradeTab.filters.originSector then
+  if tradeTab.filters.originSector and tradeTab.filters.originSector ~= "__all__" and tradeTab.filters.maxGateDistance ~= "__all__" then
     local originSectorId = filterContext and filterContext.originSectorId or normalizeLuaID(tradeTab.filters.originSector)
     local stationSectorKey = station.sectorId and tostring(station.sectorId) or nil
     if (not originSectorId) or (not stationSectorKey) then
@@ -1137,6 +1136,53 @@ local function stationPassesFilter(station, filterContext, frameCache)
   end
 
   return false
+end
+
+local function debugFilteredDataset(dataset, filterContext, frameCache)
+  if (not tradeTab.filters.originSector) or tradeTab.filters.originSector == "__all__" or tradeTab.filters.maxGateDistance == "__all__" then
+    return
+  end
+
+  local allowedSectors = filterContext and filterContext.allowedSectors or getGateDistanceSectorFilter()
+  local totalStations = 0
+  local matchedStations = 0
+  local sampleStations = {}
+
+  for _, station in ipairs(dataset.stations) do
+    totalStations = totalStations + 1
+    if stationPassesFilter(station, filterContext, frameCache) then
+      matchedStations = matchedStations + 1
+    end
+    if #sampleStations < 8 then
+      table.insert(sampleStations, string.format(
+        "%s|sectorId=%s|sector=%s|allowed=%s",
+        station.name,
+        tostring(station.sectorId),
+        tostring(station.sector),
+        tostring(allowedSectors and allowedSectors[tostring(station.sectorId)] or nil)
+      ))
+    end
+  end
+
+  debug(
+    "debugFilteredDataset originSector=" .. tostring(tradeTab.filters.originSector) ..
+    " maxGateDistance=" .. tostring(tradeTab.filters.maxGateDistance) ..
+    " totalStations=" .. tostring(totalStations) ..
+    " matchedStations=" .. tostring(matchedStations)
+  )
+  local originSectorId = (filterContext and filterContext.originSectorId) or normalizeLuaID(tradeTab.filters.originSector)
+  if originSectorId and dataset.sectorGraph then
+    local node = dataset.sectorGraph[tostring(originSectorId)]
+    local neighbors = {}
+    if node then
+      for _, neighborId in pairs(node.neighbors) do
+        table.insert(neighbors, safeSectorNameFromID(neighborId) .. "|" .. tostring(neighborId))
+      end
+      table.sort(neighbors)
+    end
+    debug("debugFilteredDataset neighbors=" .. ((#neighbors > 0) and table.concat(neighbors, ", ") or "<none>"))
+  end
+  debug("debugFilteredDataset sampleStations=" .. table.concat(sampleStations, " || "))
 end
 
 local function getVisibleRows(station, frameCache)
@@ -1202,6 +1248,15 @@ local function getVisibleRows(station, frameCache)
   return rows
 end
 
+local function profitColor(buyPrice, sellPrice)
+  local buy = tonumber(buyPrice) or 0
+  local sell = tonumber(sellPrice) or 0
+  if sell > buy then
+    return Color["text_positive"]
+  end
+  return Color["text_normal"]
+end
+
 local function buildBuyerGroups(station, frameCache)
   local groups = {}
   local order = {}
@@ -1232,13 +1287,10 @@ local function buildBuyerGroups(station, frameCache)
   for _, group in ipairs(order) do
     table.sort(group.rows, function(a, b)
       if a.profitPerJump == b.profitPerJump then
-        if a.totalProfit == b.totalProfit then
-          if a.tripAmount == b.tripAmount then
-            return wareName(a.ware) < wareName(b.ware)
-          end
-          return a.tripAmount > b.tripAmount
+        if a.profit == b.profit then
+          return wareName(a.ware) < wareName(b.ware)
         end
-        return a.totalProfit > b.totalProfit
+        return a.profit > b.profit
       end
       return a.profitPerJump > b.profitPerJump
     end)
@@ -1256,7 +1308,7 @@ end
 
 local function buildFilterOptions(dataset)
   local playerSectorId = getPlayerSectorID()
-  if (tradeTab.filters.originSector == nil) and playerSectorId then
+  if (tradeTab.filters.originSector == nil or tradeTab.filters.originSector == "__all__") and playerSectorId then
     tradeTab.filters.originSector = tostring(playerSectorId)
   end
 
@@ -1271,7 +1323,16 @@ local function buildFilterOptions(dataset)
   local sectorOptions = {
     { id = "__all__", text = "All Sectors", icon = "", displayremoveoption = false },
   }
-  local originSectorOptions = {}
+  local originSectorOptions = {
+    { id = "__all__", text = "All Origins", icon = "", displayremoveoption = false },
+  }
+  local maxGateDistanceOptions = {
+    { id = "__all__", text = "Any Distance", icon = "", displayremoveoption = false },
+  }
+  local maxTradeDistanceOptions = {
+    { id = "__all__", text = "Any Distance", icon = "", displayremoveoption = false },
+  }
+
   for _, entry in ipairs(dataset.wareOptions) do
     table.insert(wareOptions, entry)
   end
@@ -1281,6 +1342,21 @@ local function buildFilterOptions(dataset)
   for _, entry in ipairs(dataset.originSectorOptions) do
     table.insert(originSectorOptions, entry)
   end
+  for i = 0, 10 do
+    table.insert(maxGateDistanceOptions, {
+      id = tostring(i),
+      text = tostring(i),
+      icon = "",
+      displayremoveoption = false,
+    })
+    table.insert(maxTradeDistanceOptions, {
+      id = tostring(i),
+      text = tostring(i),
+      icon = "",
+      displayremoveoption = false,
+    })
+  end
+
   local validWare = tradeTab.filters.ware == "__all__"
   for _, entry in ipairs(dataset.wareOptions) do
     if entry.id == tradeTab.filters.ware then
@@ -1304,6 +1380,9 @@ local function buildFilterOptions(dataset)
   end
 
   local validOriginSector = false
+  if tradeTab.filters.originSector == "__all__" then
+    validOriginSector = true
+  end
   for _, entry in ipairs(dataset.originSectorOptions) do
     if entry.id == tradeTab.filters.originSector then
       validOriginSector = true
@@ -1314,35 +1393,33 @@ local function buildFilterOptions(dataset)
     if playerSectorId then
       tradeTab.filters.originSector = tostring(playerSectorId)
     else
-      local fallbackOrigin = dataset.originSectorOptions[1]
-      tradeTab.filters.originSector = fallbackOrigin and fallbackOrigin.id or nil
+      tradeTab.filters.originSector = "__all__"
     end
   end
 
-  local numericMaxGateDistance = tonumber(tradeTab.filters.maxGateDistance)
-  if numericMaxGateDistance == nil then
-    tradeTab.filters.maxGateDistance = "0"
-  else
-    numericMaxGateDistance = math.max(0, math.min(10, math.floor(numericMaxGateDistance + 0.5)))
-    tradeTab.filters.maxGateDistance = tostring(numericMaxGateDistance)
+  local validMaxGateDistance = tradeTab.filters.maxGateDistance == "__all__"
+  for _, entry in ipairs(maxGateDistanceOptions) do
+    if entry.id == tradeTab.filters.maxGateDistance then
+      validMaxGateDistance = true
+      break
+    end
+  end
+  if not validMaxGateDistance then
+    tradeTab.filters.maxGateDistance = "__all__"
   end
 
-  local numericMaxTradeDistance = tonumber(tradeTab.filters.maxTradeDistance)
-  if numericMaxTradeDistance == nil then
-    tradeTab.filters.maxTradeDistance = "0"
-  else
-    numericMaxTradeDistance = math.max(0, math.min(10, math.floor(numericMaxTradeDistance + 0.5)))
-    tradeTab.filters.maxTradeDistance = tostring(numericMaxTradeDistance)
+  local validMaxTradeDistance = tradeTab.filters.maxTradeDistance == "__all__"
+  for _, entry in ipairs(maxTradeDistanceOptions) do
+    if entry.id == tradeTab.filters.maxTradeDistance then
+      validMaxTradeDistance = true
+      break
+    end
+  end
+  if not validMaxTradeDistance then
+    tradeTab.filters.maxTradeDistance = "__all__"
   end
 
-  local numericCargoVolume = tonumber(tradeTab.filters.cargoVolume)
-  if numericCargoVolume == nil then
-    tradeTab.filters.cargoVolume = "5000"
-  else
-    tradeTab.filters.cargoVolume = normalizeCargoVolume(numericCargoVolume)
-  end
-
-  return modeOptions, wareOptions, sectorOptions, originSectorOptions
+  return modeOptions, wareOptions, sectorOptions, originSectorOptions, maxGateDistanceOptions, maxTradeDistanceOptions
 end
 
 local function renderFilters(objecttable, dataset, maxIcons)
@@ -1350,7 +1427,7 @@ local function renderFilters(objecttable, dataset, maxIcons)
   local rowHeight = (tradeTab.menuMapConfig and tradeTab.menuMapConfig.mapRowHeight) or Helper.standardTextHeight
   local fontSize = (tradeTab.menuMapConfig and tradeTab.menuMapConfig.mapFontSize) or Helper.standardFontSize
 
-  local modeOptions, wareOptions, sectorOptions, originSectorOptions = buildFilterOptions(dataset)
+  local modeOptions, wareOptions, sectorOptions, originSectorOptions, maxGateDistanceOptions, maxTradeDistanceOptions = buildFilterOptions(dataset)
 
   local refreshRow = objecttable:addRow("trade_refresh", {
     fixed = true,
@@ -1361,7 +1438,7 @@ local function renderFilters(objecttable, dataset, maxIcons)
     highlightColor = Color["button_highlight_default"],
     active = true,
     height = rowHeight + Helper.scaleY(8),
-  }):setText("Refresh Trade Data", {
+  }):setText(tradeTab.datasetDirty and "Refresh *" or "Refresh", {
     halign = "center",
     fontsize = fontSize + 2,
     font = Helper.standardFontBold,
@@ -1373,7 +1450,7 @@ local function renderFilters(objecttable, dataset, maxIcons)
   end
 
   local row = objecttable:addRow("trade_filters_mode", { fixed = true })
-  row[1]:setColSpan(2):createText("Mode", { fontsize = fontSize, mouseOverText = "Switch between Best Trades, Sell Offers, and Buy Offers." })
+  row[1]:setColSpan(2):createText("Mode", { fontsize = fontSize })
   row[3]:setColSpan(totalCols - 2):createDropDown(modeOptions, {
     startOption = tradeTab.filters.mode,
     active = true,
@@ -1389,8 +1466,8 @@ local function renderFilters(objecttable, dataset, maxIcons)
   end
 
   local rowWare = objecttable:addRow("trade_filters_ware", { fixed = true })
-  rowWare[1]:setColSpan(2):createText("Ware", { fontsize = fontSize, mouseOverText = "Filter results to a specific ware, or show all wares." })
-  rowWare[3]:setColSpan(totalCols - 3):createDropDown(wareOptions, {
+  rowWare[1]:setColSpan(2):createText("Ware", { fontsize = fontSize })
+  rowWare[3]:setColSpan(totalCols - 2):createDropDown(wareOptions, {
     startOption = tradeTab.filters.ware,
     active = true,
     height = rowHeight,
@@ -1403,20 +1480,10 @@ local function renderFilters(objecttable, dataset, maxIcons)
   rowWare[3].handlers.onDropDownActivated = function()
     tradeTab.menuMap.noupdate = true
   end
-  rowWare[10]:createButton({
-    active = tradeTab.filters.ware ~= "__all__",
-    height = rowHeight,
-    mouseOverText = "Reset Ware filter to All Wares.",
-  }):setText("X", { fontsize = fontSize })
-  rowWare[10].handlers.onClick = function()
-    tradeTab.menuMap.noupdate = false
-    tradeTab.filters.ware = "__all__"
-    refresh()
-  end
 
   local row2 = objecttable:addRow("trade_filters_sector", { fixed = true })
-  row2[1]:setColSpan(2):createText("Sector", { fontsize = fontSize, mouseOverText = "Limit results to stations in one displayed sector name, or show all sectors." })
-  row2[3]:setColSpan(totalCols - 3):createDropDown(sectorOptions, {
+  row2[1]:setColSpan(2):createText("Sector", { fontsize = fontSize })
+  row2[3]:setColSpan(totalCols - 2):createDropDown(sectorOptions, {
     startOption = tradeTab.filters.sector,
     active = true,
     height = rowHeight,
@@ -1429,19 +1496,9 @@ local function renderFilters(objecttable, dataset, maxIcons)
   row2[3].handlers.onDropDownActivated = function()
     tradeTab.menuMap.noupdate = true
   end
-  row2[10]:createButton({
-    active = tradeTab.filters.sector ~= "__all__",
-    height = rowHeight,
-    mouseOverText = "Reset Sector filter to All Sectors.",
-  }):setText("X", { fontsize = fontSize })
-  row2[10].handlers.onClick = function()
-    tradeTab.menuMap.noupdate = false
-    tradeTab.filters.sector = "__all__"
-    refresh()
-  end
 
   local row3 = objecttable:addRow("trade_filters_origin_sector", { fixed = true })
-  row3[1]:setColSpan(2):createText("Search Origin", { fontsize = fontSize, mouseOverText = "Starting sector used for the Search Area filter." })
+  row3[1]:setColSpan(2):createText("Origin", { fontsize = fontSize })
   row3[3]:setColSpan(totalCols - 2):createDropDown(originSectorOptions, {
     startOption = tradeTab.filters.originSector,
     active = true,
@@ -1457,99 +1514,51 @@ local function renderFilters(objecttable, dataset, maxIcons)
   end
 
   local row4 = objecttable:addRow("trade_filters_max_gate_distance", { fixed = true })
-  row4[1]:setColSpan(2):createText("Search Area", { fontsize = fontSize, mouseOverText = "How many gate jumps away from Search Origin stations may be included." })
-  row4[3]:setColSpan(totalCols - 2):createSliderCell({
-    min = 0,
-    max = 10,
-    start = tonumber(tradeTab.filters.maxGateDistance) or 0,
-    step = 1,
+  row4[1]:setColSpan(2):createText("Search Area", { fontsize = fontSize })
+  row4[3]:setColSpan(totalCols - 2):createDropDown(maxGateDistanceOptions, {
+    startOption = tradeTab.filters.maxGateDistance,
+    active = true,
     height = rowHeight,
-    mouseOverText = "How many gate jumps away from Search Origin stations may be included.",
-  }):setText("", { fontsize = fontSize })
-  row4[3].handlers.onSliderCellChanged = function(_, value)
-    tradeTab.filters.maxGateDistance = tostring(math.max(0, math.min(10, math.floor((tonumber(value) or 0) + 0.5))))
-  end
-  row4[3].handlers.onSliderCellConfirm = function()
+  }):setTextProperties({ fontsize = fontSize })
+  row4[3].handlers.onDropDownConfirmed = function(_, id)
     tradeTab.menuMap.noupdate = false
+    tradeTab.filters.maxGateDistance = id
     tradeTab.requestGateDistanceFilterUpdate()
   end
-  row4[3].handlers.onSliderCellActivated = function()
+  row4[3].handlers.onDropDownActivated = function()
     tradeTab.menuMap.noupdate = true
-  end
-  row4[3].handlers.onSliderCellDeactivated = function()
-    tradeTab.menuMap.noupdate = false
   end
 
   local row5 = objecttable:addRow("trade_filters_max_trade_distance", { fixed = true })
-  row5[1]:setColSpan(2):createText("Max Trade Distance", { fontsize = fontSize, mouseOverText = "Maximum route distance allowed between seller and buyer in Best Trades." })
-  row5[3]:setColSpan(totalCols - 2):createSliderCell({
-    min = 0,
-    max = 10,
-    start = tonumber(tradeTab.filters.maxTradeDistance) or 0,
-    step = 1,
-    height = rowHeight,
-    readOnly = tradeTab.filters.mode ~= "best",
-    mouseOverText = "Maximum route distance allowed between seller and buyer in Best Trades.",
-  }):setText("", { fontsize = fontSize })
-  row5[3].handlers.onSliderCellChanged = function(_, value)
-    tradeTab.filters.maxTradeDistance = tostring(math.max(0, math.min(10, math.floor((tonumber(value) or 0) + 0.5))))
-  end
-  row5[3].handlers.onSliderCellConfirm = function()
-    tradeTab.menuMap.noupdate = false
-    refresh()
-  end
-  row5[3].handlers.onSliderCellActivated = function()
-    tradeTab.menuMap.noupdate = true
-  end
-  row5[3].handlers.onSliderCellDeactivated = function()
-    tradeTab.menuMap.noupdate = false
-  end
-
-  local row6 = objecttable:addRow("trade_filters_cargo_volume", { fixed = true })
-  row6[1]:setColSpan(2):createText("Cargo Volume", { fontsize = fontSize, mouseOverText = "One-trip cargo volume used to estimate trip amount and trip profit in Best Trades. 0 means Full Offer." })
-  row6[3]:setColSpan(totalCols - 5):createEditBox({
+  row5[1]:setColSpan(2):createText("Max Trade Distance", { fontsize = fontSize })
+  row5[3]:setColSpan(totalCols - 2):createDropDown(maxTradeDistanceOptions, {
+    startOption = tradeTab.filters.maxTradeDistance,
     active = tradeTab.filters.mode == "best",
     height = rowHeight,
-    description = "0-100000",
-    defaultText = "0",
-    maxChars = 6,
-    mouseOverText = "Sets one-trip cargo volume for Best Trades. 0 means Full Offer with no one-trip cargo limit.",
-  }):setText(tostring(tonumber(tradeTab.filters.cargoVolume) or 5000), { fontsize = fontSize, halign = "left", x = Helper.standardTextOffsetx })
-  row6[3].handlers.onEditBoxActivated = function()
+  }):setTextProperties({ fontsize = fontSize })
+  row5[3].handlers.onDropDownConfirmed = function(_, id)
+    tradeTab.menuMap.noupdate = false
+    tradeTab.filters.maxTradeDistance = id
+    refresh()
+  end
+  row5[3].handlers.onDropDownActivated = function()
     tradeTab.menuMap.noupdate = true
   end
-  row6[3].handlers.onTextChanged = function(_, text)
-    tradeTab.filters.cargoVolume = normalizeCargoVolume(text)
-  end
-  row6[3].handlers.onEditBoxDeactivated = function(_, text)
-    tradeTab.filters.cargoVolume = normalizeCargoVolume(text)
-    tradeTab.menuMap.noupdate = false
-    refresh()
-  end
-  row6[8]:setColSpan(3):createButton({
-    active = tradeTab.filters.mode == "best",
-    height = rowHeight,
-    mouseOverText = "Apply the typed Cargo Volume value and refresh Best Trades.",
-  }):setText("Apply", { fontsize = fontSize })
-  row6[8].handlers.onClick = function()
-    tradeTab.menuMap.noupdate = false
-    refresh()
-  end
 
-  local rowsAdded = 9
+  local rowsAdded = 8
   if tradeTab.filters.mode == "best" then
     local labelRow = objecttable:addRow("trade_best_labels", {
       fixed = true,
       bgColor = Color["row_background_unselectable"],
       interactive = false,
     })
-    labelRow[1]:setColSpan(4):createText("From/To", { color = Color["text_normal"], fontsize = fontSize, mouseOverText = "Ware and destination station for the best matching one-trip sale from this source station." })
-    labelRow[5]:createText("Trip", { halign = "right", color = Color["text_normal"], fontsize = fontSize, mouseOverText = "How many units fit in one trip with the current Cargo Volume setting. Shows trip amount, or trip/full amount if the full offer exceeds one trip." })
-    labelRow[6]:createText("Jumps", { halign = "right", color = Color["text_normal"], fontsize = fontSize, mouseOverText = "Gate jumps from the source station sector to the buyer sector." })
-    labelRow[7]:createText("Buy Cr", { halign = "right", color = Color["text_normal"], fontsize = fontSize, mouseOverText = "Price paid at the source station." })
-    labelRow[8]:createText("Sell Cr", { halign = "right", color = Color["text_normal"], fontsize = fontSize, mouseOverText = "Price offered by the destination buyer." })
-    labelRow[9]:createText("Trip Profit", { halign = "right", color = Color["text_normal"], fontsize = fontSize, mouseOverText = "Profit for one trip: (Sell Cr - Buy Cr) x Trip amount." })
-    labelRow[10]:createText("$/Jump", { halign = "right", color = Color["text_normal"], fontsize = fontSize, mouseOverText = "One-trip profit divided by route jumps. Higher values favor strong nearby trades." })
+    labelRow[1]:setColSpan(4):createText("From/To", { color = Color["text_normal"], fontsize = fontSize })
+    labelRow[5]:createText("Move", { halign = "right", color = Color["text_normal"], fontsize = fontSize })
+    labelRow[6]:createText("Jumps", { halign = "right", color = Color["text_normal"], fontsize = fontSize })
+    labelRow[7]:createText("Buy Cr", { halign = "right", color = Color["text_normal"], fontsize = fontSize })
+    labelRow[8]:createText("Sell Cr", { halign = "right", color = Color["text_normal"], fontsize = fontSize })
+    labelRow[9]:createText("P/J", { halign = "right", color = Color["text_normal"], fontsize = fontSize })
+    labelRow[10]:createText("%", { halign = "right", color = Color["text_normal"], fontsize = fontSize })
     rowsAdded = rowsAdded + 1
   elseif tradeTab.filters.mode == "sells" then
     local labelRow = objecttable:addRow("trade_sell_labels", {
@@ -1557,10 +1566,10 @@ local function renderFilters(objecttable, dataset, maxIcons)
       bgColor = Color["row_background_unselectable"],
       interactive = false,
     })
-    labelRow[1]:setColSpan(7):createText("Ware", { color = Color["text_normal"], fontsize = fontSize, mouseOverText = "Ware sold by this station." })
-    labelRow[8]:createText("Qty", { halign = "right", color = Color["text_normal"], fontsize = fontSize, mouseOverText = "Quantity currently offered by this station." })
-    labelRow[9]:createText("Price", { halign = "right", color = Color["text_normal"], fontsize = fontSize, mouseOverText = "Current sell price at this station." })
-    labelRow[10]:createText("Demand", { halign = "right", color = Color["text_normal"], fontsize = fontSize, mouseOverText = "Game pricing detail derived from current supply and demand pressure." })
+    labelRow[1]:setColSpan(7):createText("Ware", { color = Color["text_normal"], fontsize = fontSize })
+    labelRow[8]:createText("Qty", { halign = "right", color = Color["text_normal"], fontsize = fontSize })
+    labelRow[9]:createText("Price", { halign = "right", color = Color["text_normal"], fontsize = fontSize })
+    labelRow[10]:createText("Demand", { halign = "right", color = Color["text_normal"], fontsize = fontSize })
     rowsAdded = rowsAdded + 1
   else
     local labelRow = objecttable:addRow("trade_buy_labels", {
@@ -1568,10 +1577,10 @@ local function renderFilters(objecttable, dataset, maxIcons)
       bgColor = Color["row_background_unselectable"],
       interactive = false,
     })
-    labelRow[1]:setColSpan(7):createText("Ware", { color = Color["text_normal"], fontsize = fontSize, mouseOverText = "Ware bought by this station." })
-    labelRow[8]:createText("Qty", { halign = "right", color = Color["text_normal"], fontsize = fontSize, mouseOverText = "Quantity currently requested by this station." })
-    labelRow[9]:createText("Price", { halign = "right", color = Color["text_normal"], fontsize = fontSize, mouseOverText = "Current buy price at this station." })
-    labelRow[10]:createText("Demand", { halign = "right", color = Color["text_normal"], fontsize = fontSize, mouseOverText = "Game pricing detail derived from current supply and demand pressure." })
+    labelRow[1]:setColSpan(7):createText("Ware", { color = Color["text_normal"], fontsize = fontSize })
+    labelRow[8]:createText("Qty", { halign = "right", color = Color["text_normal"], fontsize = fontSize })
+    labelRow[9]:createText("Price", { halign = "right", color = Color["text_normal"], fontsize = fontSize })
+    labelRow[10]:createText("Demand", { halign = "right", color = Color["text_normal"], fontsize = fontSize })
     rowsAdded = rowsAdded + 1
   end
 
@@ -1618,8 +1627,8 @@ local function renderStationRow(objecttable, station, maxIcons, numDisplayed, fr
           }
         )
         wareRow[5]:createText(
-          tripAmountText(tradeRow.tripAmount, tradeRow.amount),
-          { halign = "right", color = Color["text_normal"], mouseOverText = tripAmountMouseOverText(tradeRow.tripAmount, tradeRow.amount) }
+          movableAmountText(tradeRow.sourceAmount or tradeRow.amount, tradeRow.targetAmount or tradeRow.amount),
+          { halign = "right", color = Color["text_normal"] }
         )
         wareRow[6]:createText(
           jumpsText(tradeRow.routeDistance),
@@ -1627,19 +1636,19 @@ local function renderStationRow(objecttable, station, maxIcons, numDisplayed, fr
         )
         wareRow[7]:createText(
           compactMoneyText(tradeRow.buyPrice),
-          { halign = "right", color = Color["text_normal"], mouseOverText = exactMoneyText(tradeRow.buyPrice) }
+          { halign = "right", color = Color["text_normal"] }
         )
         wareRow[8]:createText(
           compactMoneyText(tradeRow.sellPrice),
-          { halign = "right", color = Color["text_normal"], mouseOverText = exactMoneyText(tradeRow.sellPrice) }
+          { halign = "right", color = Color["text_normal"] }
         )
         wareRow[9]:createText(
-          totalProfitText(tradeRow.buyPrice, tradeRow.sellPrice, tradeRow.tripAmount),
-          { halign = "right", color = Color["text_positive"], mouseOverText = exactMoneyText(totalProfitValue(tradeRow.buyPrice, tradeRow.sellPrice, tradeRow.tripAmount)) }
+          profitPerJumpText(tradeRow.buyPrice, tradeRow.sellPrice, tradeRow.routeDistance),
+          { halign = "right", color = Color["text_positive"] }
         )
         wareRow[10]:createText(
-          profitPerJumpText(tradeRow.buyPrice, tradeRow.sellPrice, tradeRow.tripAmount, tradeRow.routeDistance),
-          { halign = "right", color = Color["text_positive"], mouseOverText = ((tonumber(tradeRow.routeDistance) == nil) and "-" or exactMoneyText(profitPerJumpValue(tradeRow.buyPrice, tradeRow.sellPrice, tradeRow.tripAmount, tradeRow.routeDistance))) }
+          percentText(tradeRow.buyPrice, tradeRow.sellPrice),
+          { halign = "right", color = profitColor(tradeRow.buyPrice, tradeRow.sellPrice) }
         )
         numDisplayed = numDisplayed + 1
       end
@@ -1655,11 +1664,11 @@ local function renderStationRow(objecttable, station, maxIcons, numDisplayed, fr
       )
       child[8]:createText(
         amountText(tradeRow.amount),
-        { halign = "right", color = Color["text_normal"], mouseOverText = exactAmountText(tradeRow.amount) }
+        { halign = "right", color = Color["text_normal"] }
       )
       child[9]:createText(
         compactMoneyText(tradeRow.price),
-        { halign = "right", color = Color["text_normal"], mouseOverText = exactMoneyText(tradeRow.price) }
+        { halign = "right", color = Color["text_normal"] }
       )
       child[10]:createText(
         demandValueText(tradeRow.ware, tradeRow.price, tradeRow.isbuyoffer),
@@ -1694,26 +1703,6 @@ local function countCachedTradeOffers(dataset)
   return stationCount, offerCount
 end
 
-local function getBestStationScore(station, frameCache)
-  local rows = getVisibleRows(station, frameCache)
-  local bestRow = rows[1]
-  if not bestRow then
-    return -1, -1, -1
-  end
-
-  return bestRow.profitPerJump or -1, bestRow.totalProfit or -1, bestRow.tripAmount or -1
-end
-
-local function getBestDemandStationScore(station, frameCache)
-  local rows = getVisibleRows(station, frameCache)
-  local bestRow = rows[1]
-  if not bestRow then
-    return nil, nil
-  end
-
-  return demandPercentValue(bestRow.ware, bestRow.price), bestRow.price
-end
-
 local function restoreTableState(objecttable)
   local menu = tradeTab.menuMap
   if not objecttable or not menu then
@@ -1722,8 +1711,11 @@ local function restoreTableState(objecttable)
 
   local topRow = menu.settoprow or tradeTab.tableState.topRow
   if topRow then
+    debug("restoreTableState applying topRow=" .. tostring(topRow))
     objecttable:setTopRow(topRow)
     tradeTab.tableState.topRow = topRow
+  else
+    debug("restoreTableState found no topRow")
   end
 end
 
@@ -1757,6 +1749,12 @@ local function createTradeFrame(frame)
   local ok, err = pcall(function()
     tradeTab.tradeDistanceRequestsRemaining = 1
     syncTradeDistanceCacheFromBlackboard()
+    local previousTableId = menu.infoTable
+    local previousTopRow = nil
+    if previousTableId then
+      previousTopRow = GetTopRow(previousTableId)
+    end
+    debug("createTradeFrame begin previousTableId=" .. tostring(previousTableId) .. " previousTopRow=" .. tostring(previousTopRow) .. " menuSetTopRow=" .. tostring(menu.settoprow) .. " savedTopRow=" .. tostring(tradeTab.tableState.topRow))
 
     if menu.infoTable then
       tradeTab.tableState.topRow = GetTopRow(menu.infoTable)
@@ -1784,11 +1782,11 @@ local function createTradeFrame(frame)
       color = Color["text_normal"],
     })
 
-    local titleRow = objecttable:addRow("trade_data_title", {
+    local debugRow = objecttable:addRow("trade_data_debug", {
       fixed = true,
       bgColor = Color["row_title_background"],
     })
-    titleRow[1]:setColSpan(6):createText("Trade Data", {
+    debugRow[1]:setColSpan(6):createText("Trade Data", {
       color = Color["text_normal"],
       halign = "left",
       fontsize = (tradeTab.menuMapConfig and tradeTab.menuMapConfig.mapFontSize) or Helper.standardFontSize,
@@ -1799,58 +1797,8 @@ local function createTradeFrame(frame)
     local frameCache = {
       bestTradeRowsByStation = {},
     }
+    debugFilteredDataset(dataset, filterContext, frameCache)
     local stationsToRender = dataset.stations
-    if tradeTab.filters.mode == "best" then
-      stationsToRender = {}
-      for _, station in ipairs(dataset.stations) do
-        table.insert(stationsToRender, station)
-      end
-      table.sort(stationsToRender, function(a, b)
-        local aPpj, aProfit, aTrip = getBestStationScore(a, frameCache)
-        local bPpj, bProfit, bTrip = getBestStationScore(b, frameCache)
-        if aPpj == bPpj then
-          if aProfit == bProfit then
-            if aTrip == bTrip then
-              return a.name < b.name
-            end
-            return aTrip > bTrip
-          end
-          return aProfit > bProfit
-        end
-        return aPpj > bPpj
-      end)
-    elseif (tradeTab.filters.mode == "sells") or (tradeTab.filters.mode == "buys") then
-      stationsToRender = {}
-      for _, station in ipairs(dataset.stations) do
-        table.insert(stationsToRender, station)
-      end
-      table.sort(stationsToRender, function(a, b)
-        local aDemand, aPrice = getBestDemandStationScore(a, frameCache)
-        local bDemand, bPrice = getBestDemandStationScore(b, frameCache)
-
-        if aDemand == nil then
-          return false
-        end
-        if bDemand == nil then
-          return true
-        end
-
-        if aDemand == bDemand then
-          if aPrice == bPrice then
-            return a.name < b.name
-          end
-          if tradeTab.filters.mode == "sells" then
-            return aPrice < bPrice
-          end
-          return aPrice > bPrice
-        end
-
-        if tradeTab.filters.mode == "sells" then
-          return aDemand < bDemand
-        end
-        return aDemand > bDemand
-      end)
-    end
     local visibleStations = countVisibleStations(dataset, filterContext, frameCache)
     local cachedStations, cachedOffers = countCachedTradeOffers(dataset)
 
@@ -1871,7 +1819,7 @@ local function createTradeFrame(frame)
     end
 
     local detailRowsRendered = math.max(0, numDisplayed - topRows)
-    titleRow[7]:setColSpan(4):createText(
+    debugRow[7]:setColSpan(4):createText(
       string.format("Shown %d/%d | Rows %d | Offers %d", visibleStations, cachedStations, detailRowsRendered, cachedOffers),
       {
         color = Color["text_normal"],
@@ -1882,6 +1830,7 @@ local function createTradeFrame(frame)
 
     restoreTableState(objecttable)
     menu.settoprow = nil
+    debug("createTradeFrame end restoredTopRow=" .. tostring(tradeTab.tableState.topRow))
   end)
 
   if not ok then
@@ -1895,6 +1844,8 @@ local function createTradeFrame(frame)
     row[1]:createText("Trade Data error: " .. tostring(err), { color = Color["text_error"], wordwrap = true })
     return
   end
+
+  debug("rendered trade data sidebar tab")
 end
 
 local function onStationRegistryUpdated()
@@ -1911,6 +1862,15 @@ end
 local function onGateDistanceFilterUpdated()
   tradeTab.gateDistanceFilterPending = false
   if tradeTab.menuMap and tradeTab.menuMap.infoTableMode == MODE then
+    local playerId64 = getPlayerBlackboardID()
+    local count = 0
+    if playerId64 then
+      local sectors = GetNPCBlackboard(playerId64, "$my_trade_tab_gate_distance_sectors")
+      if type(sectors) == "table" then
+        count = #sectors
+      end
+    end
+    debug("onGateDistanceFilterUpdated sectors=" .. tostring(count))
     if tradeTab.menuMap.infoTable then
       local topRow = GetTopRow(tradeTab.menuMap.infoTable)
       tradeTab.tableState.topRow = topRow
@@ -1926,6 +1886,10 @@ local function onTradeDistanceUpdated(_, sourceSectorRef)
     tradeTab.tradeDistanceCachePending[tostring(sourceSectorId)] = nil
   end
   syncTradeDistanceCacheFromBlackboard()
+
+  if tradeTab.menuMap and tradeTab.menuMap.infoTableMode == MODE then
+    debug("onTradeDistanceUpdated sourceSectorId=" .. tostring(sourceSectorId))
+  end
 end
 
 local function Init()
