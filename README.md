@@ -1,5 +1,7 @@
 # Station Trade Data Tab
 
+> **Alpha warning:** this mod is early alpha software. No compatibility testing has been done with other mods, especially mods that change the map UI, trade data, station discovery, or sidebar behavior. Back up saves before relying on it in a long-running game.
+
 Station Trade Data Tab adds a **Trade Data** panel to the X4: Foundations map sidebar. It collects stations where the player currently has usable trade information and presents either raw buy/sell offers or calculated best-trade opportunities.
 
 ## Requirements
