@@ -59,7 +59,7 @@ The mod is split between Lua UI code and a small Mission Director registry:
 
 - `ui/trade_data_tab.lua` registers a new map sidebar entry through kuertee UI Extensions.
 - `md/trade_data_registry.xml` watches discovery and trade-data events, builds a player blackboard station registry, and raises Lua events when data changes.
-- Lua reads the registry, merges it with player-owned stations, rendered map stations, and the previous station cache, then calls `GetTradeList` for stations that are known, player-owned, in live view, or covered by a trade subscription.
+- Lua reads the registry, merges it with player-owned stations, rendered map stations, and the previous station cache, then calls `GetTradeList` only for operational station objects that are player-owned, currently in live view, or covered by a trade subscription.
 - Lua builds ware, sector, and origin-sector filter lists from the current dataset.
 - Best-trade rows are calculated from all matching sell offers and buy offers for the same ware.
 - Gate-distance filtering and exact trade-distance lookups use Mission Director `find_sector_in_range` through UI-triggered events and player blackboard cache tables.

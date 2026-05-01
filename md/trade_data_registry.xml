@@ -37,6 +37,24 @@
       </actions>
     </cue>
 
+    <cue name="Refresh_On_Trade_Subscription_Added" instantiate="true">
+      <conditions>
+        <event_player_licence_added licence="tradesubscription" />
+      </conditions>
+      <actions>
+        <include_actions ref="Refresh_Active_Station_Registry" />
+      </actions>
+    </cue>
+
+    <cue name="Refresh_On_Trade_Subscription_Lost" instantiate="true">
+      <conditions>
+        <event_player_licence_lost licence="tradesubscription" />
+      </conditions>
+      <actions>
+        <include_actions ref="Refresh_Active_Station_Registry" />
+      </actions>
+    </cue>
+
     <cue name="Refresh_Gate_Distance_Filter_On_UI_Request" instantiate="true">
       <conditions>
         <event_ui_triggered screen="'MapMenu'" control="'my_trade_tab_gate_distance_filter_changed'" />
@@ -58,9 +76,9 @@
     <library name="Refresh_Active_Station_Registry" purpose="include_actions">
       <actions>
         <set_value name="$Registry" exact="[]" />
-        <find_station name="$Stations" space="player.galaxy" multiple="true" checkoperational="false" />
+        <find_station name="$Stations" space="player.galaxy" multiple="true" checkoperational="true" />
         <do_for_each name="$Station" in="$Stations">
-          <do_if value="$Station.exists and ($Station.isplayerowned or $Station.isinliveview)">
+          <do_if value="$Station.exists and $Station.isoperational and ($Station.isplayerowned or $Station.isinliveview or $Station.hastradesubscription)">
             <append_to_list name="$Registry" exact="$Station" />
           </do_if>
         </do_for_each>

@@ -911,16 +911,25 @@ tradeTab.requestGateDistanceFilterUpdate = function()
 end
 
 local function getStationTradeState(stationId)
-  local isKnown, isPlayerOwned, canTrade, inLiveView, hasTradeSubscription = GetComponentData(
+  local isKnown, isPlayerOwned, canTrade, inLiveView, hasTradeSubscription, classid = GetComponentData(
     stationId,
     "isknown",
     "isplayerowned",
     "canhavetradeoffers",
     "isinliveview",
-    "tradesubscription"
+    "tradesubscription",
+    "classid"
   )
+  local isOperational = true
+  if type(IsComponentOperational) == "function" then
+    local station64 = ConvertIDTo64Bit(stationId)
+    local ok, operational = pcall(IsComponentOperational, station64)
+    isOperational = ok and operational and true or false
+  end
 
   return {
+    isStation = Helper.isComponentClass(classid, "station"),
+    isOperational = isOperational,
     isKnown = isKnown and true or false,
     isPlayerOwned = isPlayerOwned and true or false,
     canTrade = canTrade and true or false,
@@ -941,7 +950,7 @@ local function collectRenderedStationIDs()
     local id64 = entry.id
     if id64 and id64 ~= 0 then
       local classid = GetComponentData(id64, "classid")
-      if Helper.isComponentClass(classid, "station") or Helper.isComponentClass(classid, "buildstorage") then
+      if Helper.isComponentClass(classid, "station") then
         local stationId = ConvertStringToLuaID(tostring(id64))
         stationId = normalizeLuaID(stationId)
         if stationId and stationId ~= 0 then
@@ -1127,7 +1136,7 @@ local function buildTradeDataset()
 
   for _, stationId in ipairs(stationIds) do
     local state = getStationTradeState(stationId)
-    local shouldInspect = state.canTrade and (state.isPlayerOwned or state.inLiveView or state.hasTradeSubscription)
+    local shouldInspect = state.isStation and state.isOperational and state.canTrade and (state.isPlayerOwned or state.inLiveView or state.hasTradeSubscription)
     if shouldInspect then
       local offers = collectTradeOffers(stationId)
       local buys = {}
