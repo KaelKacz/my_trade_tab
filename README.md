@@ -42,12 +42,14 @@ Large numbers are compacted in the table, and the exact values are available in 
 ## Filters
 
 - **Mode** switches between Best Trades, Sell Offers, and Buy Offers.
-- **Ware** filters to one ware. The small **X** button resets it to All Wares.
-- **Sector** filters to one station sector. The small **X** button resets it to All Sectors.
+- **Ware** filters to one or more wares. Selecting entries toggles them, and the small **X** button resets it to All Wares.
+- **Sector** filters to one or more station sectors. Selecting entries toggles them, and the small **X** button resets it to All Sectors.
+- **Faction** filters to one or more station-owner factions. In Best Trades, either the seller or buyer can match.
+- **Illegal Wares** hides illegal wares by default, can show them, or can show only illegal wares. Legality is checked against the station sector police faction.
 - **Search Origin** chooses the sector used by the Search Area filter.
 - **Search Area** limits displayed stations by gate distance from Search Origin.
 - **Max Trade Distance** limits seller-to-buyer route distance in Best Trades.
-- **Cargo Volume** sets the one-trip cargo capacity used for Best Trades. `0` means use the full matching offer amount. Click **Apply** after typing to refresh immediately.
+- **Cargo Volume** sets the one-trip cargo capacity used for Best Trades. By default it follows the selected player ship's largest free cargo storage. `0` means use the full matching offer amount. Manual edits stop auto-following; click **Auto** to use the selected ship again or **Apply** after typing to refresh immediately.
 
 The **Refresh Trade Data** button rebuilds the cached dataset manually. The tab also marks the dataset dirty when the registry reports changed station data.
 

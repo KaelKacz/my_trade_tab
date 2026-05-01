@@ -3,8 +3,16 @@ local C = ffi.C
 
 ffi.cdef[[
 typedef uint64_t UniverseID;
+typedef struct {
+  const char* name;
+  const char* transport;
+  uint32_t spaceused;
+  uint32_t capacity;
+} StorageInfo;
 UniverseID GetPlayerID(void);
 UniverseID GetContextByClass(UniverseID componentid, const char* classname, bool includeself);
+uint32_t GetCargoTransportTypes(StorageInfo* result, uint32_t resultlen, UniverseID containerid, bool merge, bool aftertradeorders);
+uint32_t GetNumCargoTransportTypes(UniverseID containerid, bool merge);
 ]]
 
 local MODE = "trade_data"
@@ -19,6 +27,8 @@ local tradeTab = {
   tradeDistanceCachePending = {},
   exactTradeDistanceCache = {},
   tradeDistanceRequestsRemaining = 0,
+  cargoVolumeAuto = true,
+  cargoVolumeShipId = nil,
   tableState = {
     leftTopRow = nil,
     rightTopRow = nil,
@@ -27,6 +37,11 @@ local tradeTab = {
     mode = "best",
     ware = "__all__",
     sector = "__all__",
+    faction = "__all__",
+    illegal = "hide",
+    wareSelection = {},
+    sectorSelection = {},
+    factionSelection = {},
     originSector = nil,
     maxGateDistance = "0",
     maxTradeDistance = "0",
@@ -35,7 +50,12 @@ local tradeTab = {
 }
 
 local getReachableSectors
+local normalizeCargoVolume
 local wareVolumeCache = {}
+local wareRowColors = {
+  black = { r = 0, g = 0, b = 0, a = 40 },
+  darkGray = { r = 28, g = 28, b = 28, a = 40 },
+}
 
 local function debug(msg)
   if type(DebugError) == "function" then
@@ -118,6 +138,97 @@ local function getPlayerSectorID()
   return nil
 end
 
+local function getSelectedPlayerShipID()
+  local menu = tradeTab.menuMap
+  if not menu then
+    return nil
+  end
+
+  if type(menu.selectedcomponents) == "table" then
+    for id in pairs(menu.selectedcomponents) do
+      local shipId = normalizeLuaID(ConvertStringToLuaID(tostring(id))) or normalizeLuaID(id)
+      if shipId then
+        local isPlayerOwned, isDeployable, classid = GetComponentData(shipId, "isplayerowned", "isdeployable", "classid")
+        if isPlayerOwned and (not isDeployable) and Helper.isComponentClass(classid, "ship") then
+          return shipId
+        end
+      end
+    end
+  end
+
+  if type(menu.selectedplayerships) == "table" and #menu.selectedplayerships > 0 then
+    return normalizeLuaID(ConvertStringToLuaID(tostring(menu.selectedplayerships[1]))) or normalizeLuaID(menu.selectedplayerships[1])
+  end
+
+  if menu.currentplayership and menu.currentplayership ~= 0 then
+    return normalizeLuaID(ConvertStringToLuaID(tostring(menu.currentplayership))) or normalizeLuaID(menu.currentplayership)
+  end
+
+  return nil
+end
+
+local function getShipFreeCargoVolume(shipId)
+  if not shipId then
+    return nil
+  end
+
+  local ship64 = ConvertIDTo64Bit(shipId)
+  if not ship64 or ship64 == 0 then
+    return nil
+  end
+
+  local ok, count = pcall(C.GetNumCargoTransportTypes, ship64, true)
+  if not ok or not count or count <= 0 then
+    return nil
+  end
+
+  local storage = ffi.new("StorageInfo[?]", count)
+  ok, count = pcall(C.GetCargoTransportTypes, storage, count, ship64, true, true)
+  if not ok or not count or count <= 0 then
+    return nil
+  end
+
+  local bestFree = 0
+  for i = 0, count - 1 do
+    local free = math.max(0, tonumber(storage[i].capacity) - tonumber(storage[i].spaceused))
+    bestFree = math.max(bestFree, free)
+  end
+
+  if bestFree <= 0 then
+    return nil
+  end
+  return bestFree
+end
+
+local function applySelectedShipCargoVolume()
+  local shipId = getSelectedPlayerShipID()
+  local volume = getShipFreeCargoVolume(shipId)
+  if not volume then
+    return false
+  end
+
+  tradeTab.cargoVolumeAuto = true
+  tradeTab.cargoVolumeShipId = tostring(shipId)
+  tradeTab.filters.cargoVolume = normalizeCargoVolume(volume)
+  return true
+end
+
+local function syncAutoCargoVolume()
+  if not tradeTab.cargoVolumeAuto then
+    return
+  end
+
+  local shipId = getSelectedPlayerShipID()
+  local volume = getShipFreeCargoVolume(shipId)
+  if not volume then
+    tradeTab.cargoVolumeShipId = nil
+    return
+  end
+
+  tradeTab.cargoVolumeShipId = tostring(shipId)
+  tradeTab.filters.cargoVolume = normalizeCargoVolume(volume)
+end
+
 local function getPlayerBlackboardID()
   local playerId64 = ConvertStringTo64Bit(tostring(C.GetPlayerID()))
   if playerId64 and playerId64 ~= 0 then
@@ -156,6 +267,64 @@ local function wareVolume(ware)
   volume = math.max(1, volume)
   wareVolumeCache[key] = volume
   return volume
+end
+
+local function safeFactionName(faction)
+  if not faction or faction == "" then
+    return "Unknown Faction"
+  end
+
+  local ok, name = pcall(GetFactionData, faction, "name")
+  if not ok then
+    name = nil
+  end
+  return (name and name ~= "") and name or tostring(faction)
+end
+
+local function isWareIllegalAtSector(ware, sectorId)
+  if not ware or not sectorId or sectorId == 0 or type(IsWareIllegalTo) ~= "function" then
+    return false
+  end
+
+  local policeFaction = GetComponentData(sectorId, "policefaction")
+  if not policeFaction or policeFaction == "" then
+    return false
+  end
+
+  local ok, illegal = pcall(IsWareIllegalTo, ware, "player", policeFaction)
+  return ok and illegal and true or false
+end
+
+local function tradeRowPassesFactionFilter(row)
+  local factions = tradeTab.filters.factionSelection or {}
+  if next(factions) == nil then
+    return true
+  end
+
+  return factions[row.owner] or factions[row.sourceOwner] or factions[row.targetOwner]
+end
+
+local function tradeRowPassesIllegalFilter(row)
+  local illegalFilter = tradeTab.filters.illegal
+  if illegalFilter == "show" then
+    return true
+  end
+
+  local isIllegal = row.isIllegal and true or false
+  if illegalFilter == "only" then
+    return isIllegal
+  end
+
+  return not isIllegal
+end
+
+local function tradeRowPassesCommonFilters(row)
+  local wares = tradeTab.filters.wareSelection or {}
+  if next(wares) ~= nil and not wares[row.ware] then
+    return false
+  end
+
+  return tradeRowPassesFactionFilter(row) and tradeRowPassesIllegalFilter(row)
 end
 
 local function fixedMoneyNumber(value)
@@ -332,7 +501,7 @@ local function tripAmountMouseOverText(tripAmount, fullAmount)
   return exactAmountText(trip) .. "/" .. exactAmountText(full)
 end
 
-local function normalizeCargoVolume(value)
+normalizeCargoVolume = function(value)
   local numericValue = tonumber(value) or 0
   return tostring(math.max(0, math.min(100000, math.floor(numericValue + 0.5))))
 end
@@ -429,6 +598,88 @@ local function indentText(level, text)
   for _ = 1, level do
     result = "    " .. result
   end
+  return result
+end
+
+local function wareRowBackground(rowIndex)
+  if (rowIndex % 2) == 0 then
+    return wareRowColors.darkGray
+  end
+  return wareRowColors.black
+end
+
+local function selectionCount(selection)
+  local count = 0
+  for _ in pairs(selection or {}) do
+    count = count + 1
+  end
+  return count
+end
+
+local function selectionPasses(selection, value)
+  if next(selection or {}) == nil then
+    return true
+  end
+  return selection[value] and true or false
+end
+
+local function toggleSelection(selectionKey, id)
+  local selection = tradeTab.filters[selectionKey] or {}
+  tradeTab.filters[selectionKey] = selection
+
+  if id == "__all__" then
+    for key in pairs(selection) do
+      selection[key] = nil
+    end
+    return
+  end
+
+  if selection[id] then
+    selection[id] = nil
+  else
+    selection[id] = true
+  end
+end
+
+local function clearSelection(selectionKey)
+  local selection = tradeTab.filters[selectionKey] or {}
+  for key in pairs(selection) do
+    selection[key] = nil
+  end
+  tradeTab.filters[selectionKey] = selection
+end
+
+local function filterSummary(selection, allText, options, singular, plural)
+  local count = selectionCount(selection)
+  if count == 0 then
+    return allText
+  end
+  if count == 1 then
+    for _, option in ipairs(options or {}) do
+      if selection[option.id] then
+        return option.text
+      end
+    end
+    return "1 " .. singular
+  end
+  return tostring(count) .. " " .. plural
+end
+
+local function buildMultiSelectOptions(allId, allText, options, selection)
+  local result = {
+    { id = allId, text = ((selectionCount(selection) == 0) and "[x] " or "[ ] ") .. allText, icon = "", displayremoveoption = false },
+  }
+
+  for _, option in ipairs(options or {}) do
+    local selected = selection and selection[option.id]
+    table.insert(result, {
+      id = option.id,
+      text = (selected and "[x] " or "[ ] ") .. option.text,
+      icon = option.icon or "",
+      displayremoveoption = false,
+    })
+  end
+
   return result
 end
 
@@ -870,6 +1121,7 @@ local function buildTradeDataset()
   local buyOffersByWare = {}
   local wares = {}
   local sectors = {}
+  local factions = {}
   local sectorIds = {}
   local seenSectorIds = {}
 
@@ -911,7 +1163,12 @@ local function buildTradeDataset()
       if (#buys > 0) or (#sells > 0) then
         local sectorId = getSectorID(stationId)
         local sectorName = sectorId and safeSectorNameFromID(sectorId) or safeSector(stationId)
+        local owner, ownerName = GetComponentData(stationId, "owner", "ownername")
+        ownerName = (ownerName and ownerName ~= "") and ownerName or safeFactionName(owner)
         sectors[sectorName] = sectorName
+        if owner and owner ~= "" and owner ~= "ownerless" then
+          factions[owner] = ownerName
+        end
         if sectorId and (not seenSectorIds[sectorId]) then
           seenSectorIds[sectorId] = true
           table.insert(sectorIds, sectorId)
@@ -919,6 +1176,8 @@ local function buildTradeDataset()
         stations[tostring(stationId)] = {
           id = stationId,
           name = safeName(stationId),
+          owner = owner,
+          ownerName = ownerName,
           state = state,
           sectorId = sectorId,
           sector = sectorName,
@@ -943,6 +1202,12 @@ local function buildTradeDataset()
     table.insert(sectorOptions, { id = sectorName, text = sectorName, icon = "", displayremoveoption = false })
   end
   table.sort(sectorOptions, function(a, b) return a.text < b.text end)
+
+  local factionOptions = {}
+  for faction, name in pairs(factions) do
+    table.insert(factionOptions, { id = faction, text = name, icon = "", displayremoveoption = false })
+  end
+  table.sort(factionOptions, function(a, b) return a.text < b.text end)
 
   local playerSectorId = getPlayerSectorID()
   if playerSectorId and (not seenSectorIds[playerSectorId]) then
@@ -981,6 +1246,7 @@ local function buildTradeDataset()
     buyOffersByWare = buyOffersByWare,
     wareOptions = wareOptions,
     sectorOptions = sectorOptions,
+    factionOptions = factionOptions,
     originSectorOptions = originSectorOptions,
     sectorGraph = sectorGraph,
     routeDistanceCache = routeDistanceCache,
@@ -1010,7 +1276,7 @@ local function bestTradeRowPassesFilter(row)
   local maxTradeDistance = tradeTab.filters.maxTradeDistance
   local limit = tonumber(maxTradeDistance)
   if limit == nil then
-    return true
+    return tradeRowPassesCommonFilters(row)
   end
 
   local routeDistance = row.routeDistance
@@ -1024,7 +1290,7 @@ local function bestTradeRowPassesFilter(row)
     row.routeDistance = routeDistance
   end
 
-  return (routeDistance ~= nil) and (routeDistance <= limit)
+  return (routeDistance ~= nil) and (routeDistance <= limit) and tradeRowPassesCommonFilters(row)
 end
 
 local function buildBestTradeRowsForStation(station, frameCache)
@@ -1062,6 +1328,8 @@ local function buildBestTradeRowsForStation(station, frameCache)
           ware = offer.ware,
           sourceId = station.id,
           targetId = candidate.stationId,
+          sourceOwner = station.owner,
+          targetOwner = targetStation and targetStation.owner or nil,
           sourceSectorId = station.sectorId,
           targetSectorId = targetStation and targetStation.sectorId or nil,
           routeDistance = routeDistance,
@@ -1071,6 +1339,7 @@ local function buildBestTradeRowsForStation(station, frameCache)
           profitPerJump = profitPerJumpValue(offer.price, candidate.price, tripAmount, routeDistance),
           amount = amount,
           tripAmount = tripAmount,
+          isIllegal = isWareIllegalAtSector(offer.ware, station.sectorId) or isWareIllegalAtSector(offer.ware, targetStation and targetStation.sectorId or nil),
         }
 
         if bestTradeRowPassesFilter(row) then
@@ -1137,11 +1406,11 @@ local function stationPassesFilter(station, filterContext, frameCache)
     end
   end
 
-  if tradeTab.filters.sector ~= "__all__" and station.sector ~= tradeTab.filters.sector then
+  if not selectionPasses(tradeTab.filters.sectorSelection, station.sector) then
     return false
   end
 
-  if tradeTab.filters.ware == "__all__" then
+  if next(tradeTab.filters.wareSelection or {}) == nil then
     if tradeTab.filters.mode == "best" then
       for _, row in ipairs(buildBestTradeRowsForStation(station, frameCache)) do
         if row then
@@ -1150,28 +1419,53 @@ local function stationPassesFilter(station, filterContext, frameCache)
       end
       return false
     elseif tradeTab.filters.mode == "sells" then
-      return #station.sells > 0
+      for _, row in ipairs(station.sells) do
+        if tradeRowPassesCommonFilters({
+          ware = row.ware,
+          owner = station.owner,
+          isIllegal = isWareIllegalAtSector(row.ware, station.sectorId),
+        }) then
+          return true
+        end
+      end
+      return false
     else
-      return #station.buys > 0
+      for _, row in ipairs(station.buys) do
+        if tradeRowPassesCommonFilters({
+          ware = row.ware,
+          owner = station.owner,
+          isIllegal = isWareIllegalAtSector(row.ware, station.sectorId),
+        }) then
+          return true
+        end
+      end
+      return false
     end
   end
 
-  local targetWare = tradeTab.filters.ware
   if tradeTab.filters.mode == "best" then
     for _, row in ipairs(buildBestTradeRowsForStation(station, frameCache)) do
-      if row.ware == targetWare then
+      if tradeRowPassesCommonFilters(row) then
         return true
       end
     end
   elseif tradeTab.filters.mode == "sells" then
     for _, row in ipairs(station.sells) do
-      if row.ware == targetWare then
+      if tradeRowPassesCommonFilters({
+        ware = row.ware,
+        owner = station.owner,
+        isIllegal = isWareIllegalAtSector(row.ware, station.sectorId),
+      }) then
         return true
       end
     end
   else
     for _, row in ipairs(station.buys) do
-      if row.ware == targetWare then
+      if tradeRowPassesCommonFilters({
+        ware = row.ware,
+        owner = station.owner,
+        isIllegal = isWareIllegalAtSector(row.ware, station.sectorId),
+      }) then
         return true
       end
     end
@@ -1185,7 +1479,7 @@ local function getVisibleRows(station, frameCache)
 
   if tradeTab.filters.mode == "best" then
     for _, row in ipairs(buildBestTradeRowsForStation(station, frameCache)) do
-      if tradeTab.filters.ware == "__all__" or row.ware == tradeTab.filters.ware then
+      if tradeRowPassesCommonFilters(row) then
         table.insert(rows, row)
       end
     end
@@ -1194,13 +1488,16 @@ local function getVisibleRows(station, frameCache)
 
   if tradeTab.filters.mode == "sells" then
     for _, offer in ipairs(station.sells) do
-      if tradeTab.filters.ware == "__all__" or offer.ware == tradeTab.filters.ware then
-        table.insert(rows, {
+      local row = {
           ware = offer.ware,
           amount = offer.amount,
           price = offer.price,
           isbuyoffer = false,
-        })
+          owner = station.owner,
+          isIllegal = isWareIllegalAtSector(offer.ware, station.sectorId),
+        }
+      if tradeRowPassesCommonFilters(row) then
+        table.insert(rows, row)
       end
     end
 
@@ -1217,13 +1514,16 @@ local function getVisibleRows(station, frameCache)
     end)
   else
     for _, offer in ipairs(station.buys) do
-      if tradeTab.filters.ware == "__all__" or offer.ware == tradeTab.filters.ware then
-        table.insert(rows, {
+      local row = {
           ware = offer.ware,
           amount = offer.amount,
           price = offer.price,
           isbuyoffer = true,
-        })
+          owner = station.owner,
+          isIllegal = isWareIllegalAtSector(offer.ware, station.sectorId),
+        }
+      if tradeRowPassesCommonFilters(row) then
+        table.insert(rows, row)
       end
     end
 
@@ -1306,11 +1606,13 @@ local function buildFilterOptions(dataset)
     { id = "sells", text = "Sell Offers", icon = "", displayremoveoption = false },
     { id = "buys", text = "Buy Offers", icon = "", displayremoveoption = false },
   }
-  local wareOptions = {
-    { id = "__all__", text = "All Wares", icon = "", displayremoveoption = false },
-  }
-  local sectorOptions = {
-    { id = "__all__", text = "All Sectors", icon = "", displayremoveoption = false },
+  local wareOptions = {}
+  local sectorOptions = {}
+  local factionOptions = {}
+  local illegalOptions = {
+    { id = "hide", text = "Hide Illegal", icon = "", displayremoveoption = false },
+    { id = "show", text = "Show Illegal", icon = "", displayremoveoption = false },
+    { id = "only", text = "Only Illegal", icon = "", displayremoveoption = false },
   }
   local originSectorOptions = {}
   for _, entry in ipairs(dataset.wareOptions) do
@@ -1319,29 +1621,44 @@ local function buildFilterOptions(dataset)
   for _, entry in ipairs(dataset.sectorOptions) do
     table.insert(sectorOptions, entry)
   end
+  for _, entry in ipairs(dataset.factionOptions) do
+    table.insert(factionOptions, entry)
+  end
   for _, entry in ipairs(dataset.originSectorOptions) do
     table.insert(originSectorOptions, entry)
   end
-  local validWare = tradeTab.filters.ware == "__all__"
+  local validWares = {}
   for _, entry in ipairs(dataset.wareOptions) do
-    if entry.id == tradeTab.filters.ware then
-      validWare = true
-      break
-    end
+    validWares[entry.id] = true
   end
-  if not validWare then
-    tradeTab.filters.ware = "__all__"
+  for id in pairs(tradeTab.filters.wareSelection or {}) do
+    if not validWares[id] then
+      tradeTab.filters.wareSelection[id] = nil
+    end
   end
 
-  local validSector = tradeTab.filters.sector == "__all__"
+  local validSectors = {}
   for _, entry in ipairs(dataset.sectorOptions) do
-    if entry.id == tradeTab.filters.sector then
-      validSector = true
-      break
+    validSectors[entry.id] = true
+  end
+  for id in pairs(tradeTab.filters.sectorSelection or {}) do
+    if not validSectors[id] then
+      tradeTab.filters.sectorSelection[id] = nil
     end
   end
-  if not validSector then
-    tradeTab.filters.sector = "__all__"
+
+  local validFactions = {}
+  for _, entry in ipairs(dataset.factionOptions) do
+    validFactions[entry.id] = true
+  end
+  for id in pairs(tradeTab.filters.factionSelection or {}) do
+    if not validFactions[id] then
+      tradeTab.filters.factionSelection[id] = nil
+    end
+  end
+
+  if tradeTab.filters.illegal ~= "hide" and tradeTab.filters.illegal ~= "show" and tradeTab.filters.illegal ~= "only" then
+    tradeTab.filters.illegal = "hide"
   end
 
   local validOriginSector = false
@@ -1376,6 +1693,8 @@ local function buildFilterOptions(dataset)
     tradeTab.filters.maxTradeDistance = tostring(numericMaxTradeDistance)
   end
 
+  syncAutoCargoVolume()
+
   local numericCargoVolume = tonumber(tradeTab.filters.cargoVolume)
   if numericCargoVolume == nil then
     tradeTab.filters.cargoVolume = "5000"
@@ -1383,7 +1702,16 @@ local function buildFilterOptions(dataset)
     tradeTab.filters.cargoVolume = normalizeCargoVolume(numericCargoVolume)
   end
 
-  return modeOptions, wareOptions, sectorOptions, originSectorOptions
+  return
+    modeOptions,
+    buildMultiSelectOptions("__all__", "All Wares", wareOptions, tradeTab.filters.wareSelection),
+    buildMultiSelectOptions("__all__", "All Sectors", sectorOptions, tradeTab.filters.sectorSelection),
+    buildMultiSelectOptions("__all__", "All Factions", factionOptions, tradeTab.filters.factionSelection),
+    illegalOptions,
+    originSectorOptions,
+    wareOptions,
+    sectorOptions,
+    factionOptions
 end
 
 local function renderFilters(objecttable, dataset, maxIcons)
@@ -1391,7 +1719,7 @@ local function renderFilters(objecttable, dataset, maxIcons)
   local rowHeight = (tradeTab.menuMapConfig and tradeTab.menuMapConfig.mapRowHeight) or Helper.standardTextHeight
   local fontSize = (tradeTab.menuMapConfig and tradeTab.menuMapConfig.mapFontSize) or Helper.standardFontSize
 
-  local modeOptions, wareOptions, sectorOptions, originSectorOptions = buildFilterOptions(dataset)
+  local modeOptions, wareOptions, sectorOptions, factionOptions, illegalOptions, originSectorOptions, rawWareOptions, rawSectorOptions, rawFactionOptions = buildFilterOptions(dataset)
 
   local refreshRow = objecttable:addRow("trade_refresh", {
     fixed = true,
@@ -1432,53 +1760,98 @@ local function renderFilters(objecttable, dataset, maxIcons)
   local rowWare = objecttable:addRow("trade_filters_ware", { fixed = true })
   rowWare[1]:setColSpan(2):createText("Ware", { fontsize = fontSize, mouseOverText = "Filter results to a specific ware, or show all wares." })
   rowWare[3]:setColSpan(totalCols - 3):createDropDown(wareOptions, {
-    startOption = tradeTab.filters.ware,
+    startOption = "__all__",
     active = true,
     height = rowHeight,
+    textOverride = filterSummary(tradeTab.filters.wareSelection, "All Wares", rawWareOptions, "Ware", "Wares"),
   }):setTextProperties({ fontsize = fontSize })
   rowWare[3].handlers.onDropDownConfirmed = function(_, id)
     tradeTab.menuMap.noupdate = false
-    tradeTab.filters.ware = id
+    toggleSelection("wareSelection", id)
     refresh()
   end
   rowWare[3].handlers.onDropDownActivated = function()
     tradeTab.menuMap.noupdate = true
   end
   rowWare[10]:createButton({
-    active = tradeTab.filters.ware ~= "__all__",
+    active = selectionCount(tradeTab.filters.wareSelection) > 0,
     height = rowHeight,
     mouseOverText = "Reset Ware filter to All Wares.",
   }):setText("X", { fontsize = fontSize })
   rowWare[10].handlers.onClick = function()
     tradeTab.menuMap.noupdate = false
-    tradeTab.filters.ware = "__all__"
+    clearSelection("wareSelection")
     refresh()
   end
 
   local row2 = objecttable:addRow("trade_filters_sector", { fixed = true })
   row2[1]:setColSpan(2):createText("Sector", { fontsize = fontSize, mouseOverText = "Limit results to stations in one displayed sector name, or show all sectors." })
   row2[3]:setColSpan(totalCols - 3):createDropDown(sectorOptions, {
-    startOption = tradeTab.filters.sector,
+    startOption = "__all__",
     active = true,
     height = rowHeight,
+    textOverride = filterSummary(tradeTab.filters.sectorSelection, "All Sectors", rawSectorOptions, "Sector", "Sectors"),
   }):setTextProperties({ fontsize = fontSize })
   row2[3].handlers.onDropDownConfirmed = function(_, id)
     tradeTab.menuMap.noupdate = false
-    tradeTab.filters.sector = id
+    toggleSelection("sectorSelection", id)
     refresh()
   end
   row2[3].handlers.onDropDownActivated = function()
     tradeTab.menuMap.noupdate = true
   end
   row2[10]:createButton({
-    active = tradeTab.filters.sector ~= "__all__",
+    active = selectionCount(tradeTab.filters.sectorSelection) > 0,
     height = rowHeight,
     mouseOverText = "Reset Sector filter to All Sectors.",
   }):setText("X", { fontsize = fontSize })
   row2[10].handlers.onClick = function()
     tradeTab.menuMap.noupdate = false
-    tradeTab.filters.sector = "__all__"
+    clearSelection("sectorSelection")
     refresh()
+  end
+
+  local rowFaction = objecttable:addRow("trade_filters_faction", { fixed = true })
+  rowFaction[1]:setColSpan(2):createText("Faction", { fontsize = fontSize, mouseOverText = "Limit offers to stations owned by one faction. Best Trades match either seller or buyer." })
+  rowFaction[3]:setColSpan(totalCols - 3):createDropDown(factionOptions, {
+    startOption = "__all__",
+    active = true,
+    height = rowHeight,
+    textOverride = filterSummary(tradeTab.filters.factionSelection, "All Factions", rawFactionOptions, "Faction", "Factions"),
+  }):setTextProperties({ fontsize = fontSize })
+  rowFaction[3].handlers.onDropDownConfirmed = function(_, id)
+    tradeTab.menuMap.noupdate = false
+    toggleSelection("factionSelection", id)
+    refresh()
+  end
+  rowFaction[3].handlers.onDropDownActivated = function()
+    tradeTab.menuMap.noupdate = true
+  end
+  rowFaction[10]:createButton({
+    active = selectionCount(tradeTab.filters.factionSelection) > 0,
+    height = rowHeight,
+    mouseOverText = "Reset Faction filter to All Factions.",
+  }):setText("X", { fontsize = fontSize })
+  rowFaction[10].handlers.onClick = function()
+    tradeTab.menuMap.noupdate = false
+    clearSelection("factionSelection")
+    refresh()
+  end
+
+  local rowIllegal = objecttable:addRow("trade_filters_illegal", { fixed = true })
+  rowIllegal[1]:setColSpan(2):createText("Illegal Wares", { fontsize = fontSize, mouseOverText = "Filter wares illegal to the station sector police faction." })
+  rowIllegal[3]:setColSpan(totalCols - 2):createDropDown(illegalOptions, {
+    startOption = tradeTab.filters.illegal,
+    active = true,
+    height = rowHeight,
+  }):setTextProperties({ fontsize = fontSize })
+  rowIllegal[3].handlers.onDropDownConfirmed = function(_, id)
+    tradeTab.menuMap.noupdate = false
+    tradeTab.filters.illegal = id
+    refresh()
+  end
+  rowIllegal[3].handlers.onDropDownActivated = function()
+    tradeTab.menuMap.noupdate = true
   end
 
   local row3 = objecttable:addRow("trade_filters_origin_sector", { fixed = true })
@@ -1529,7 +1902,6 @@ local function renderFilters(objecttable, dataset, maxIcons)
     start = tonumber(tradeTab.filters.maxTradeDistance) or 0,
     step = 1,
     height = rowHeight,
-    readOnly = tradeTab.filters.mode ~= "best",
     mouseOverText = "Maximum route distance allowed between seller and buyer in Best Trades.",
   }):setText("", { fontsize = fontSize })
   row5[3].handlers.onSliderCellChanged = function(_, value)
@@ -1548,7 +1920,8 @@ local function renderFilters(objecttable, dataset, maxIcons)
 
   local row6 = objecttable:addRow("trade_filters_cargo_volume", { fixed = true })
   row6[1]:setColSpan(2):createText("Cargo Volume", { fontsize = fontSize, mouseOverText = "One-trip cargo volume used to estimate trip amount and trip profit in Best Trades. 0 means Full Offer." })
-  row6[3]:setColSpan(totalCols - 5):createEditBox({
+  local hasSelectedShipCargo = getShipFreeCargoVolume(getSelectedPlayerShipID()) ~= nil
+  row6[3]:setColSpan(totalCols - 7):createEditBox({
     active = tradeTab.filters.mode == "best",
     height = rowHeight,
     description = "0-100000",
@@ -1560,12 +1933,27 @@ local function renderFilters(objecttable, dataset, maxIcons)
     tradeTab.menuMap.noupdate = true
   end
   row6[3].handlers.onTextChanged = function(_, text)
+    tradeTab.cargoVolumeAuto = false
+    tradeTab.cargoVolumeShipId = nil
     tradeTab.filters.cargoVolume = normalizeCargoVolume(text)
   end
   row6[3].handlers.onEditBoxDeactivated = function(_, text)
+    tradeTab.cargoVolumeAuto = false
+    tradeTab.cargoVolumeShipId = nil
     tradeTab.filters.cargoVolume = normalizeCargoVolume(text)
     tradeTab.menuMap.noupdate = false
     refresh()
+  end
+  row6[6]:setColSpan(2):createButton({
+    active = tradeTab.filters.mode == "best" and hasSelectedShipCargo,
+    height = rowHeight,
+    mouseOverText = "Use the selected player ship's largest free cargo storage volume.",
+  }):setText("Auto", { fontsize = fontSize })
+  row6[6].handlers.onClick = function()
+    tradeTab.menuMap.noupdate = false
+    if applySelectedShipCargoVolume() then
+      refresh()
+    end
   end
   row6[8]:setColSpan(3):createButton({
     active = tradeTab.filters.mode == "best",
@@ -1573,11 +1961,13 @@ local function renderFilters(objecttable, dataset, maxIcons)
     mouseOverText = "Apply the typed Cargo Volume value and refresh Best Trades.",
   }):setText("Apply", { fontsize = fontSize })
   row6[8].handlers.onClick = function()
+    tradeTab.cargoVolumeAuto = false
+    tradeTab.cargoVolumeShipId = nil
     tradeTab.menuMap.noupdate = false
     refresh()
   end
 
-  local rowsAdded = 9
+  local rowsAdded = 11
   if tradeTab.filters.mode == "best" then
     local labelRow = objecttable:addRow("trade_best_labels", {
       fixed = true,
@@ -1622,14 +2012,19 @@ end
 local function renderStationRow(objecttable, station, maxIcons, numDisplayed, frameCache)
   local totalCols = 4 + maxIcons
   local detailRows = getVisibleRows(station, frameCache)
+  local detailRowIndex = 0
 
   local row = objecttable:addRow({ "trade_station", station.id }, {
     bgColor = Color["row_background_blue"],
   })
+  local stationLabel = station.name
+  if station.sector and station.sector ~= "" then
+    stationLabel = stationLabel .. " - " .. station.sector
+  end
   row[1]:setColSpan(totalCols):createButton({
     bgColor = Color["button_background_hidden"],
     highlightColor = Color["button_highlight_hidden"],
-  }):setText(trimText(station.name, 70), { halign = "left" })
+  }):setText(trimText(stationLabel, 90), { halign = "left" })
   row[1].handlers.onRightClick = function()
     openStationContextMenu(station.id)
   end
@@ -1649,13 +2044,16 @@ local function renderStationRow(objecttable, station, maxIcons, numDisplayed, fr
       numDisplayed = numDisplayed + 1
 
       for _, tradeRow in ipairs(buyerGroup.rows) do
+        detailRowIndex = detailRowIndex + 1
         local wareRow = objecttable:addRow(false, {
           interactive = false,
+          bgColor = wareRowBackground(detailRowIndex),
         })
         wareRow[1]:setColSpan(4):createText(
           trimText(indentText(2, wareName(tradeRow.ware)), 40),
           {
-            color = Color["text_warning"]
+            color = tradeRow.isIllegal and (Color["text_illegal"] or Color["text_warning"]) or Color["text_normal"],
+            mouseOverText = tradeRow.isIllegal and "Illegal ware in at least one endpoint sector." or nil,
           }
         )
         wareRow[5]:createText(
@@ -1687,12 +2085,17 @@ local function renderStationRow(objecttable, station, maxIcons, numDisplayed, fr
     end
   else
     for _, tradeRow in ipairs(detailRows) do
+      detailRowIndex = detailRowIndex + 1
       local child = objecttable:addRow(false, {
         interactive = false,
+        bgColor = wareRowBackground(detailRowIndex),
       })
       child[1]:setColSpan(7):createText(
         trimText(indentText(1, wareName(tradeRow.ware)), 68),
-        { color = Color["text_warning"] }
+        {
+          color = tradeRow.isIllegal and (Color["text_illegal"] or Color["text_warning"]) or Color["text_normal"],
+          mouseOverText = tradeRow.isIllegal and "Illegal ware in this station sector." or nil,
+        }
       )
       child[8]:createText(
         amountText(tradeRow.amount),
