@@ -15,7 +15,7 @@ The mod declares these dependencies in `content.xml` and `ui.xml`.
 ## Opening the Tab
 
 1. Open the map.
-2. Use the left sidebar.
+2. Use either the left or right sidebar.
 3. Select **Trade Data**.
 
 The tab shows a refresh button, filters, a small summary line, and the matching station rows. Station and buyer rows can be right-clicked to open the normal interact menu for that object.

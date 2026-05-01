@@ -20,7 +20,8 @@ local tradeTab = {
   exactTradeDistanceCache = {},
   tradeDistanceRequestsRemaining = 0,
   tableState = {
-    topRow = nil,
+    leftTopRow = nil,
+    rightTopRow = nil,
   },
   filters = {
     mode = "best",
@@ -344,15 +345,55 @@ local function trimText(text, maxLen)
   return string.sub(text, 1, math.max(0, maxLen - 3)) .. "..."
 end
 
-local function refresh()
-  if tradeTab.menuMap and tradeTab.menuMap.refreshInfoFrame then
-    local tableId = tradeTab.menuMap.infoTable
-    if tableId then
-      local topRow = GetTopRow(tableId)
-      tradeTab.tableState.topRow = topRow
-      tradeTab.menuMap.settoprow = topRow
-    end
-    tradeTab.menuMap.refreshInfoFrame()
+local function getTradeTableId(side)
+  local menu = tradeTab.menuMap
+  if not menu then
+    return nil
+  end
+
+  if side == "right" then
+    return menu.infoTableRight
+  end
+
+  return menu.infoTable
+end
+
+local function rememberTableState(side)
+  local menu = tradeTab.menuMap
+  local tableId = getTradeTableId(side)
+  if not menu or not tableId then
+    return
+  end
+
+  local topRow = GetTopRow(tableId)
+  if side == "right" then
+    tradeTab.tableState.rightTopRow = topRow
+  else
+    tradeTab.tableState.leftTopRow = topRow
+    menu.settoprow = topRow
+  end
+end
+
+local function refresh(side)
+  local menu = tradeTab.menuMap
+  if not menu then
+    return
+  end
+
+  local leftOpen = menu.infoTableMode == MODE
+  local rightOpen = menu.searchTableMode == MODE
+
+  if side == "left" or (side == nil and leftOpen) then
+    rememberTableState("left")
+  end
+  if side == "right" or (side == nil and rightOpen) then
+    rememberTableState("right")
+  end
+
+  if leftOpen and menu.refreshInfoFrame then
+    menu.refreshInfoFrame()
+  elseif rightOpen and menu.refreshInfoFrame2 then
+    menu.refreshInfoFrame2()
   end
 end
 
@@ -1714,20 +1755,30 @@ local function getBestDemandStationScore(station, frameCache)
   return demandPercentValue(bestRow.ware, bestRow.price), bestRow.price
 end
 
-local function restoreTableState(objecttable)
+local function restoreTableState(objecttable, side)
   local menu = tradeTab.menuMap
   if not objecttable or not menu then
     return
   end
 
-  local topRow = menu.settoprow or tradeTab.tableState.topRow
+  local topRow
+  if side == "right" then
+    topRow = tradeTab.tableState.rightTopRow
+  else
+    topRow = menu.settoprow or tradeTab.tableState.leftTopRow
+  end
+
   if topRow then
     objecttable:setTopRow(topRow)
-    tradeTab.tableState.topRow = topRow
+    if side == "right" then
+      tradeTab.tableState.rightTopRow = topRow
+    else
+      tradeTab.tableState.leftTopRow = topRow
+    end
   end
 end
 
-local function createSideBar(config)
+local function addTradeBarEntry(bar)
   local tradeDataEntry = {
     name = "Trade Data",
     icon = TAB_ICON,
@@ -1736,31 +1787,53 @@ local function createSideBar(config)
     helpOverlayText = "Known stations with trade data and best trade opportunities",
   }
 
-  if config.leftBar[#config.leftBar].mode ~= MODE then
-    for i = #config.leftBar - 1, 1, -1 do
-      if config.leftBar[i + 1].mode == MODE then
-        table.remove(config.leftBar, i + 1)
-        table.remove(config.leftBar, i)
+  if not bar then
+    return
+  end
+
+  if bar[#bar] and bar[#bar].mode == MODE then
+    return
+  end
+
+  for i = #bar, 1, -1 do
+    if bar[i].mode == MODE then
+      table.remove(bar, i)
+      if bar[i - 1] and bar[i - 1].spacing then
+        table.remove(bar, i - 1)
       end
     end
-    config.leftBar[#config.leftBar + 1] = { spacing = true }
-    config.leftBar[#config.leftBar + 1] = tradeDataEntry
   end
+
+  bar[#bar + 1] = { spacing = true }
+  bar[#bar + 1] = tradeDataEntry
 end
 
-local function createTradeFrame(frame)
+local function createSideBar(config)
+  addTradeBarEntry(config.leftBar)
+end
+
+local function createRightBar(config)
+  addTradeBarEntry(config.rightBar)
+end
+
+local function createTradeFrame(frame, side)
   local menu = tradeTab.menuMap
-  if not menu or menu.infoTableMode ~= MODE or not frame then
-    return
+  if not menu or not frame then
+    return false
+  end
+  if side == "right" then
+    if menu.searchTableMode ~= MODE then
+      return false
+    end
+  elseif menu.infoTableMode ~= MODE then
+    return false
   end
 
   local ok, err = pcall(function()
     tradeTab.tradeDistanceRequestsRemaining = 1
     syncTradeDistanceCacheFromBlackboard()
 
-    if menu.infoTable then
-      tradeTab.tableState.topRow = GetTopRow(menu.infoTable)
-    end
+    rememberTableState(side)
 
     local objecttable = frame:addTable(10, {
       tabOrder = 1,
@@ -1880,8 +1953,10 @@ local function createTradeFrame(frame)
       }
     )
 
-    restoreTableState(objecttable)
-    menu.settoprow = nil
+    restoreTableState(objecttable, side)
+    if side ~= "right" then
+      menu.settoprow = nil
+    end
   end)
 
   if not ok then
@@ -1893,29 +1968,23 @@ local function createTradeFrame(frame)
     })
     local row = errtable:addRow(false, { interactive = false })
     row[1]:createText("Trade Data error: " .. tostring(err), { color = Color["text_error"], wordwrap = true })
-    return
+    return true
   end
+
+  return true
 end
 
 local function onStationRegistryUpdated()
-  if tradeTab.menuMap and tradeTab.menuMap.infoTableMode == MODE then
-    if tradeTab.menuMap.infoTable then
-      local topRow = GetTopRow(tradeTab.menuMap.infoTable)
-      tradeTab.tableState.topRow = topRow
-      tradeTab.menuMap.settoprow = topRow
-    end
+  if tradeTab.menuMap and ((tradeTab.menuMap.infoTableMode == MODE) or (tradeTab.menuMap.searchTableMode == MODE)) then
+    rememberTableState("left")
+    rememberTableState("right")
     tradeTab.datasetDirty = true
   end
 end
 
 local function onGateDistanceFilterUpdated()
   tradeTab.gateDistanceFilterPending = false
-  if tradeTab.menuMap and tradeTab.menuMap.infoTableMode == MODE then
-    if tradeTab.menuMap.infoTable then
-      local topRow = GetTopRow(tradeTab.menuMap.infoTable)
-      tradeTab.tableState.topRow = topRow
-      tradeTab.menuMap.settoprow = topRow
-    end
+  if tradeTab.menuMap and ((tradeTab.menuMap.infoTableMode == MODE) or (tradeTab.menuMap.searchTableMode == MODE)) then
     refresh()
   end
 end
@@ -1926,6 +1995,14 @@ local function onTradeDistanceUpdated(_, sourceSectorRef)
     tradeTab.tradeDistanceCachePending[tostring(sourceSectorId)] = nil
   end
   syncTradeDistanceCacheFromBlackboard()
+end
+
+local function createTradeFrameLeft(frame)
+  return createTradeFrame(frame, "left")
+end
+
+local function createTradeFrameRight(frame)
+  return createTradeFrame(frame, "right")
 end
 
 local function Init()
@@ -1939,7 +2016,9 @@ local function Init()
   tradeTab.menuMapConfig = menuMap.uix_getConfig() or {}
 
   menuMap.registerCallback("createSideBar_on_start", createSideBar, "my_trade_tab_sidebar")
-  menuMap.registerCallback("createInfoFrame_on_menu_infoTableMode", createTradeFrame, "my_trade_tab_infoframe")
+  menuMap.registerCallback("createRightBar_on_start", createRightBar, "my_trade_tab_rightbar")
+  menuMap.registerCallback("createInfoFrame_on_menu_infoTableMode", createTradeFrameLeft, "my_trade_tab_infoframe")
+  menuMap.registerCallback("createInfoFrame2_on_menu_infoModeRight", createTradeFrameRight, "my_trade_tab_infoframe_right")
   RegisterEvent("my_trade_tab.station_registry_updated", onStationRegistryUpdated)
   RegisterEvent("my_trade_tab.gate_distance_updated", onGateDistanceFilterUpdated)
   RegisterEvent("my_trade_tab.trade_distance_updated", onTradeDistanceUpdated)
