@@ -18,11 +18,11 @@ The mod declares these dependencies in `content.xml` and `ui.xml`.
 2. Use either the left or right sidebar.
 3. Select **Trade Data**.
 
-The tab shows a refresh button, filters, a small summary line, and the matching station rows. Station and buyer rows can be right-clicked to open the normal interact menu for that object.
+The tab shows sub-tabs for **Best Trades**, **Sell Offers**, **Buy Offers**, and **Settings**, plus filters, a refresh button, a small summary line, and matching station rows. Station and buyer rows can be right-clicked to open the normal interact menu for that object.
 
 ## What the Tab Shows
 
-The tab has three modes:
+The tab has three trade modes:
 
 - **Best Trades**: shows profitable one-trip sell-to-buyer opportunities.
 - **Sell Offers**: shows known station sell offers.
@@ -49,7 +49,7 @@ Large numbers are compacted in the table, and the exact values are available in 
 - **Search Origin** chooses the sector used by the Search Area filter.
 - **Search Area** limits displayed stations by gate distance from Search Origin.
 - **Max Trade Distance** limits seller-to-buyer route distance in Best Trades.
-- **Cargo Volume** sets the one-trip cargo capacity used for Best Trades. By default it follows the selected player ship's largest free cargo storage. `0` means use the full matching offer amount. Manual edits stop auto-following; click **Auto** to use the selected ship again or **Apply** after typing to refresh immediately.
+- **Cargo Volume** sets the one-trip cargo capacity used for Best Trades. `0` means use the full matching offer amount. Click **Apply** after typing to refresh immediately, or **Apply Ship** to use the selected player ship's largest free cargo storage once.
 
 The **Refresh Trade Data** button rebuilds the cached dataset manually. The tab also marks the dataset dirty when the registry reports changed station data.
 
@@ -57,7 +57,9 @@ The **Refresh Trade Data** button rebuilds the cached dataset manually. The tab 
 
 The mod is split between Lua UI code and a small Mission Director registry:
 
-- `ui/trade_data_tab.lua` registers a new map sidebar entry through kuertee UI Extensions.
+- `ui/trade_data_tab.lua` is the small entry point. The implementation lives in `ui/trade_data/*.lua`, loaded in `ui.xml` order.
+- `ui/trade_data/frame.lua` registers the map sidebar entry through kuertee UI Extensions.
+- `ui/trade_data/dataset.lua`, `best_trades.lua`, and the render files handle station data, trade scoring, and table drawing.
 - `md/trade_data_registry.xml` watches discovery and trade-data events, builds a player blackboard station registry, and raises Lua events when data changes.
 - Lua reads the registry, merges it with player-owned stations, rendered map stations, and the previous station cache, then calls `GetTradeList` only for operational station objects that are player-owned, currently in live view, or covered by a trade subscription.
 - Lua builds ware, sector, and origin-sector filter lists from the current dataset.

@@ -5,6 +5,14 @@
     <dependency name="ego_interactmenu" />
     <dependency name="kuertee_ui_extensions" />
     <dependency name="sn_mod_support_apis" />
+    <file name="ui/trade_data/context.lua" />
+    <file name="ui/trade_data/helpers.lua" />
+    <file name="ui/trade_data/filter_controls.lua" />
+    <file name="ui/trade_data/dataset.lua" />
+    <file name="ui/trade_data/best_trades.lua" />
+    <file name="ui/trade_data/render_filters.lua" />
+    <file name="ui/trade_data/render_rows.lua" />
+    <file name="ui/trade_data/frame.lua" />
     <file name="ui/trade_data_tab.lua" />
   </environment>
 </addon>

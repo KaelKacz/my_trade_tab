@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<diff>
+    <add sel="/icons">
+        <icon name="my_trade_tab_best" texture="extensions\my_trade_tab\assets\fx\gui\textures\trade_data_icons\trade_data.tga" height="128" width="128" />
+        <icon name="my_trade_tab_sells" texture="extensions\my_trade_tab\assets\fx\gui\textures\trade_data_icons\up.tga" height="128" width="128" />
+        <icon name="my_trade_tab_buys" texture="extensions\my_trade_tab\assets\fx\gui\textures\trade_data_icons\down.tga" height="128" width="128" />
+        <icon name="my_trade_tab_settings" texture="extensions\my_trade_tab\assets\fx\gui\textures\trade_data_icons\options.tga" height="128" width="128" />
+    </add>
+</diff>
