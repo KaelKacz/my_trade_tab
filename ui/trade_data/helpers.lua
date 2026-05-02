@@ -501,10 +501,10 @@ function getTradeTableId(side)
   end
 
   if side == "right" then
-    return menu.infoTableRight
+    return menu.infoTableRight2 or menu.infoTableRight
   end
 
-  return menu.infoTable
+  return menu.infoTable2 or menu.infoTable
 end
 
 function rememberTableState(side)
@@ -514,7 +514,11 @@ function rememberTableState(side)
     return
   end
 
-  local topRow = GetTopRow(tableId)
+  local ok, topRow = pcall(GetTopRow, tableId)
+  if not ok or topRow == nil then
+    return
+  end
+
   if side == "right" then
     tradeTab.tableState.rightTopRow = topRow
   else

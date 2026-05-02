@@ -298,6 +298,13 @@ function createTradeFrameRight(frame)
   return createTradeFrame(frame, "right")
 end
 
+function onRefreshInfoFrame2Start()
+  if tradeTab.menuMap and tradeTab.menuMap.searchTableMode == MODE then
+    rememberTableState("right")
+  end
+  return false
+end
+
 function Init()
   local menuMap = Helper.getMenu("MapMenu")
   if menuMap == nil or type(menuMap.registerCallback) ~= "function" then
@@ -312,6 +319,7 @@ function Init()
   menuMap.registerCallback("createRightBar_on_start", createRightBar, "my_trade_tab_rightbar")
   menuMap.registerCallback("createInfoFrame_on_menu_infoTableMode", createTradeFrameLeft, "my_trade_tab_infoframe")
   menuMap.registerCallback("createInfoFrame2_on_menu_infoModeRight", createTradeFrameRight, "my_trade_tab_infoframe_right")
+  menuMap.registerCallback("refreshInfoFrame2_on_start", onRefreshInfoFrame2Start, "my_trade_tab_infoframe_right_scroll")
   RegisterEvent("my_trade_tab.station_registry_updated", onStationRegistryUpdated)
   RegisterEvent("my_trade_tab.gate_distance_updated", onGateDistanceFilterUpdated)
   RegisterEvent("my_trade_tab.trade_distance_updated", onTradeDistanceUpdated)
