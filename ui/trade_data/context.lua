@@ -16,6 +16,7 @@ typedef struct {
 } StorageInfo;
 UniverseID GetPlayerID(void);
 UniverseID GetContextByClass(UniverseID componentid, const char* classname, bool includeself);
+void SetFocusMapComponent(UniverseID holomapid, UniverseID componentid, bool force);
 uint32_t GetCargoTransportTypes(StorageInfo* result, uint32_t resultlen, UniverseID containerid, bool merge, bool aftertradeorders);
 uint32_t GetNumCargoTransportTypes(UniverseID containerid, bool merge);
 ]]
@@ -59,5 +60,13 @@ wareVolumeCache = {}
 wareRowColors = {
   black = { r = 0, g = 0, b = 0, a = 40 },
   darkGray = { r = 28, g = 28, b = 28, a = 40 },
+}
+buyerRowColors = {
+  background = { r = 32, g = 46, b = 64, a = 58 },
+  highlight = { r = 48, g = 68, b = 92, a = 80 },
+  selected = { r = 62, g = 90, b = 122, a = 78 },
+}
+sellerRowColors = {
+  selected = { r = 52, g = 86, b = 124, a = 72 },
 }
 

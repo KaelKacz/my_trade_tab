@@ -110,6 +110,61 @@ function getSelectedPlayerShipID()
   return nil
 end
 
+function isMapComponentSelected(componentId)
+  local menu = tradeTab.menuMap
+  if not menu or not componentId or type(menu.isSelectedComponent) ~= "function" then
+    return false
+  end
+
+  local ok, selected = pcall(menu.isSelectedComponent, componentId)
+  return ok and selected and true or false
+end
+
+function selectMapComponent(componentId)
+  local menu = tradeTab.menuMap
+  if not menu or not componentId then
+    return false
+  end
+
+  if type(menu.clearSelectedComponents) == "function" then
+    menu.clearSelectedComponents()
+  elseif type(menu.selectedcomponents) == "table" then
+    menu.selectedcomponents = {}
+  end
+
+  if type(menu.addSelectedComponent) ~= "function" then
+    return false
+  end
+
+  menu.noupdate = false
+  local ok = pcall(menu.addSelectedComponent, componentId, true, false)
+  if ok then
+    refresh()
+    return true
+  end
+
+  return false
+end
+
+function focusMapComponent(componentId)
+  local menu = tradeTab.menuMap
+  if not menu or not componentId or not menu.holomap then
+    return false
+  end
+
+  local component64 = ConvertIDTo64Bit(componentId)
+  if not component64 or component64 == 0 then
+    return false
+  end
+
+  local ok = pcall(C.SetFocusMapComponent, menu.holomap, component64, true)
+  if ok then
+    return true
+  end
+
+  return false
+end
+
 function getShipFreeCargoVolume(shipId)
   if not shipId then
     return nil

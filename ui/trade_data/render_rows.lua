@@ -4,18 +4,27 @@ function renderStationRow(objecttable, station, maxIcons, numDisplayed, frameCac
   local totalCols = 4 + maxIcons
   local detailRows = getVisibleRows(station, frameCache)
   local detailRowIndex = 0
+  local stationSelected = isMapComponentSelected(station.id)
+  local stationBgColor = stationSelected and sellerRowColors.selected or Color["row_background_blue"]
 
   local row = objecttable:addRow({ "trade_station", station.id }, {
-    bgColor = Color["row_background_blue"],
+    bgColor = stationBgColor,
   })
   local stationLabel = station.name
   if station.sector and station.sector ~= "" then
     stationLabel = stationLabel .. " - " .. station.sector
   end
   row[1]:setColSpan(totalCols):createButton({
-    bgColor = Color["button_background_hidden"],
+    bgColor = stationBgColor,
     highlightColor = Color["button_highlight_hidden"],
   }):setText(trimText(stationLabel, 90), { halign = "left" })
+  row[1].handlers.onClick = function()
+    selectMapComponent(station.id)
+  end
+  row[1].handlers.onDoubleClick = function()
+    selectMapComponent(station.id)
+    focusMapComponent(station.id)
+  end
   row[1].handlers.onRightClick = function()
     openStationContextMenu(station.id)
   end
@@ -24,11 +33,26 @@ function renderStationRow(objecttable, station, maxIcons, numDisplayed, frameCac
   if tradeTab.filters.mode == "best" then
     local buyerGroups = buildBuyerGroups(station, frameCache)
     for _, buyerGroup in ipairs(buyerGroups) do
-      local buyerRow = objecttable:addRow({ "trade_buyer", buyerGroup.id, station.id }, {})
+      local buyerSelected = isMapComponentSelected(buyerGroup.id)
+      local buyerBgColor = buyerSelected and buyerRowColors.selected or buyerRowColors.background
+      local buyerRow = objecttable:addRow({ "trade_buyer", buyerGroup.id, station.id }, {
+        bgColor = buyerBgColor,
+      })
+      local buyerLabel = buyerGroup.name
+      if buyerGroup.sector and buyerGroup.sector ~= "" then
+        buyerLabel = buyerLabel .. " - " .. buyerGroup.sector
+      end
       buyerRow[1]:setColSpan(totalCols):createButton({
-        bgColor = Color["button_background_hidden"],
+        bgColor = buyerBgColor,
         highlightColor = Color["button_highlight_hidden"],
-      }):setText(trimText(indentText(1, buyerGroup.name), 72), { halign = "left" })
+      }):setText(trimText(indentText(1, buyerLabel), 72), { halign = "left" })
+      buyerRow[1].handlers.onClick = function()
+        selectMapComponent(buyerGroup.id)
+      end
+      buyerRow[1].handlers.onDoubleClick = function()
+        selectMapComponent(buyerGroup.id)
+        focusMapComponent(buyerGroup.id)
+      end
       buyerRow[1].handlers.onRightClick = function()
         openStationContextMenu(buyerGroup.id)
       end

@@ -288,6 +288,7 @@ function buildBuyerGroups(station, frameCache)
         group = {
           id = buyerId,
           name = safeName(buyerId),
+          sector = safeSector(buyerId),
           bestProfit = 0,
           rows = {},
         }
