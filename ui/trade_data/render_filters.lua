@@ -283,7 +283,6 @@ function renderFilters(objecttable, dataset, maxIcons)
     start = tonumber(tradeTab.filters.maxTradeDistance) or 0,
     step = 1,
     height = rowHeight,
-    mouseOverText = "Maximum route distance allowed between seller and buyer in Best Trades.",
   }):setText("", { fontsize = fontSize })
   row5[3].handlers.onSliderCellChanged = function(_, value)
     tradeTab.filters.maxTradeDistance = tostring(math.max(0, math.min(10, math.floor((tonumber(value) or 0) + 0.5))))
