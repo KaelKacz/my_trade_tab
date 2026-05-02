@@ -116,7 +116,7 @@ function createTradeFrame(frame, side)
     local objecttable = frame:addTable(10, {
       tabOrder = 2,
       skipTabChange = true,
-      reserveScrollBar = false,
+      reserveScrollBar = true,
       highlightMode = "off",
     })
     objecttable.properties.y = tabtable.properties.y + tabtable:getFullHeight() + Helper.borderSize
