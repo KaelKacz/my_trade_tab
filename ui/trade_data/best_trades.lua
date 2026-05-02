@@ -1,5 +1,119 @@
 local moduleEnv = MyTradeTab
 setfenv(1, moduleEnv)
+function bestTradeSortOptions()
+  return {
+    { id = "profitPerJump", text = "$/Jump", icon = "", displayremoveoption = false },
+    { id = "totalProfit", text = "Trip Profit", icon = "", displayremoveoption = false },
+    { id = "tripAmount", text = "Trip Amount", icon = "", displayremoveoption = false },
+    { id = "routeDistance", text = "Route Distance", icon = "", displayremoveoption = false },
+  }
+end
+
+function normalizeBestTradeSettings()
+  tradeTab.settings = tradeTab.settings or {}
+  tradeTab.settings.bestColumns = tradeTab.settings.bestColumns or {}
+
+  local validSort = false
+  for _, option in ipairs(bestTradeSortOptions()) do
+    if tradeTab.settings.bestSort == option.id then
+      validSort = true
+      break
+    end
+  end
+  if not validSort then
+    tradeTab.settings.bestSort = "profitPerJump"
+  end
+
+  local columns = tradeTab.settings.bestColumns
+  if columns.trip == nil then columns.trip = true end
+  if columns.jumps == nil then columns.jumps = true end
+  if columns.buySell == nil then columns.buySell = true end
+  if columns.profit == nil then columns.profit = true end
+  if columns.profitPerJump == nil then columns.profitPerJump = true end
+end
+
+function isBestColumnVisible(key)
+  normalizeBestTradeSettings()
+  return tradeTab.settings.bestColumns[key] and true or false
+end
+
+function bestTradeVisibleValueColumnCount()
+  local count = 0
+  if isBestColumnVisible("trip") then count = count + 1 end
+  if isBestColumnVisible("jumps") then count = count + 1 end
+  if isBestColumnVisible("buySell") then count = count + 2 end
+  if isBestColumnVisible("profit") then count = count + 1 end
+  if isBestColumnVisible("profitPerJump") then count = count + 1 end
+  return count
+end
+
+function toggleBestColumn(key)
+  normalizeBestTradeSettings()
+  local columns = tradeTab.settings.bestColumns
+  local visibleCount = 0
+  for _, columnKey in ipairs({ "trip", "jumps", "buySell", "profit", "profitPerJump" }) do
+    if columns[columnKey] then
+      visibleCount = visibleCount + 1
+    end
+  end
+
+  if columns[key] and visibleCount <= 1 then
+    return
+  end
+  columns[key] = not columns[key]
+end
+
+local function bestTradeSortValue(row, sortId)
+  if not row then
+    return nil
+  end
+  if sortId == "totalProfit" then
+    return tonumber(row.totalProfit) or 0
+  elseif sortId == "tripAmount" then
+    return tonumber(row.tripAmount) or 0
+  elseif sortId == "routeDistance" then
+    return tonumber(row.routeDistance) or 999999
+  end
+  return tonumber(row.profitPerJump) or 0
+end
+
+local function compareBestTradeNumber(a, b, sortId)
+  if a == b then
+    return nil
+  end
+  if sortId == "routeDistance" then
+    return a < b
+  end
+  return a > b
+end
+
+function compareBestTradeRows(a, b)
+  normalizeBestTradeSettings()
+  if not a then
+    return false
+  end
+  if not b then
+    return true
+  end
+
+  local sortId = tradeTab.settings.bestSort
+  local primary = compareBestTradeNumber(bestTradeSortValue(a, sortId), bestTradeSortValue(b, sortId), sortId)
+  if primary ~= nil then
+    return primary
+  end
+
+  for _, fallbackSortId in ipairs({ "profitPerJump", "totalProfit", "tripAmount", "routeDistance" }) do
+    if fallbackSortId ~= sortId then
+      local fallback = compareBestTradeNumber(bestTradeSortValue(a, fallbackSortId), bestTradeSortValue(b, fallbackSortId), fallbackSortId)
+      if fallback ~= nil then
+        return fallback
+      end
+    end
+  end
+
+  return wareName(a.ware) < wareName(b.ware)
+end
+
 function bestTradeRowPassesFilter(row)
   if (tonumber(row.tripAmount) or 0) <= 0 then
     return false
@@ -90,18 +204,7 @@ function buildBestTradeRowsForStation(station, frameCache)
     end
   end
 
-  table.sort(rows, function(a, b)
-    if a.profitPerJump == b.profitPerJump then
-      if a.totalProfit == b.totalProfit then
-        if a.tripAmount == b.tripAmount then
-          return wareName(a.ware) < wareName(b.ware)
-        end
-        return a.tripAmount > b.tripAmount
-      end
-      return a.totalProfit > b.totalProfit
-    end
-    return a.profitPerJump > b.profitPerJump
-  end)
+  table.sort(rows, compareBestTradeRows)
 
   if frameCache then
     frameCache.bestTradeRowsByStation[tostring(station.id)] = rows
@@ -304,25 +407,17 @@ function buildBuyerGroups(station, frameCache)
   end
 
   for _, group in ipairs(order) do
-    table.sort(group.rows, function(a, b)
-      if a.profitPerJump == b.profitPerJump then
-        if a.totalProfit == b.totalProfit then
-          if a.tripAmount == b.tripAmount then
-            return wareName(a.ware) < wareName(b.ware)
-          end
-          return a.tripAmount > b.tripAmount
-        end
-        return a.totalProfit > b.totalProfit
-      end
-      return a.profitPerJump > b.profitPerJump
-    end)
+    table.sort(group.rows, compareBestTradeRows)
   end
 
   table.sort(order, function(a, b)
-    if a.bestProfit == b.bestProfit then
+    if not a.rows[1] or not b.rows[1] then
       return a.name < b.name
     end
-    return a.bestProfit > b.bestProfit
+    if not compareBestTradeRows(a.rows[1], b.rows[1]) and not compareBestTradeRows(b.rows[1], a.rows[1]) then
+      return a.name < b.name
+    end
+    return compareBestTradeRows(a.rows[1], b.rows[1])
   end)
 
   return order

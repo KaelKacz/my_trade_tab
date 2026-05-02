@@ -346,13 +346,30 @@ function renderFilters(objecttable, dataset, maxIcons)
       bgColor = Color["row_background_unselectable"],
       interactive = false,
     })
-    labelRow[1]:setColSpan(4):createText("From/To", { color = Color["text_normal"], fontsize = fontSize, mouseOverText = "Ware and destination station for the best matching one-trip sale from this source station." })
-    labelRow[5]:createText("Trip", { halign = "right", color = Color["text_normal"], fontsize = fontSize, mouseOverText = "How many units fit in one trip with the current Cargo Volume setting. Shows trip amount, or trip/full amount if the full offer exceeds one trip." })
-    labelRow[6]:createText("Jumps", { halign = "right", color = Color["text_normal"], fontsize = fontSize, mouseOverText = "Gate jumps from the source station sector to the buyer sector." })
-    labelRow[7]:createText("Buy Cr", { halign = "right", color = Color["text_normal"], fontsize = fontSize, mouseOverText = "Price paid at the source station." })
-    labelRow[8]:createText("Sell Cr", { halign = "right", color = Color["text_normal"], fontsize = fontSize, mouseOverText = "Price offered by the destination buyer." })
-    labelRow[9]:createText("Trip Profit", { halign = "right", color = Color["text_normal"], fontsize = fontSize, mouseOverText = "Profit for one trip: (Sell Cr - Buy Cr) x Trip amount." })
-    labelRow[10]:createText("$/Jump", { halign = "right", color = Color["text_normal"], fontsize = fontSize, mouseOverText = "One-trip profit divided by route jumps. Higher values favor strong nearby trades." })
+    local visibleValueCols = bestTradeVisibleValueColumnCount()
+    local nextCol = totalCols - visibleValueCols + 1
+    labelRow[1]:setColSpan(totalCols - visibleValueCols):createText("From/To", { color = Color["text_normal"], fontsize = fontSize, mouseOverText = "Ware and destination station for the best matching one-trip sale from this source station." })
+    if isBestColumnVisible("trip") then
+      labelRow[nextCol]:createText("Trip", { halign = "right", color = Color["text_normal"], fontsize = fontSize, mouseOverText = "How many units fit in one trip with the current Cargo Volume setting. Shows trip amount, or trip/full amount if the full offer exceeds one trip." })
+      nextCol = nextCol + 1
+    end
+    if isBestColumnVisible("jumps") then
+      labelRow[nextCol]:createText("Jumps", { halign = "right", color = Color["text_normal"], fontsize = fontSize, mouseOverText = "Gate jumps from the source station sector to the buyer sector." })
+      nextCol = nextCol + 1
+    end
+    if isBestColumnVisible("buySell") then
+      labelRow[nextCol]:createText("Buy Cr", { halign = "right", color = Color["text_normal"], fontsize = fontSize, mouseOverText = "Price paid at the source station." })
+      nextCol = nextCol + 1
+      labelRow[nextCol]:createText("Sell Cr", { halign = "right", color = Color["text_normal"], fontsize = fontSize, mouseOverText = "Price offered by the destination buyer." })
+      nextCol = nextCol + 1
+    end
+    if isBestColumnVisible("profit") then
+      labelRow[nextCol]:createText("Profit", { halign = "right", color = Color["text_normal"], fontsize = fontSize, mouseOverText = "Profit for one trip: (Sell Cr - Buy Cr) x Trip amount." })
+      nextCol = nextCol + 1
+    end
+    if isBestColumnVisible("profitPerJump") then
+      labelRow[nextCol]:createText("$/Jump", { halign = "right", color = Color["text_normal"], fontsize = fontSize, mouseOverText = "One-trip profit divided by route jumps. Higher values favor strong nearby trades." })
+    end
     rowsAdded = rowsAdded + 1
   elseif tradeTab.filters.mode == "sells" then
     local labelRow = objecttable:addRow("trade_sell_labels", {
@@ -381,9 +398,11 @@ function renderFilters(objecttable, dataset, maxIcons)
   return rowsAdded
 end
 
-function renderSettingsMockup(objecttable, maxIcons)
+function renderSettings(objecttable, maxIcons)
   local totalCols = 4 + maxIcons
+  local rowHeight = (tradeTab.menuMapConfig and tradeTab.menuMapConfig.mapRowHeight) or Helper.standardTextHeight
   local fontSize = (tradeTab.menuMapConfig and tradeTab.menuMapConfig.mapFontSize) or Helper.standardFontSize
+  normalizeBestTradeSettings()
 
   local title = objecttable:addRow("trade_settings_title", {
     fixed = true,
@@ -396,12 +415,24 @@ function renderSettingsMockup(objecttable, maxIcons)
     font = Helper.standardFontBold,
   })
 
-  local sortRow = objecttable:addRow("trade_settings_sort", { fixed = true, interactive = false })
-  sortRow[1]:setColSpan(3):createText("Best Trades Sort", { fontsize = fontSize })
-  sortRow[4]:setColSpan(totalCols - 3):createText("$/Jump, Trip Profit, Trip Amount, Route Distance", {
+  local sortRow = objecttable:addRow("trade_settings_sort", { fixed = true })
+  sortRow[1]:setColSpan(3):createText("Best Trades Sort", {
     fontsize = fontSize,
-    color = Color["text_inactive"] or Color["text_normal"],
+    mouseOverText = "Choose the primary sort order for Best Trades stations, buyers, and ware rows.",
   })
+  sortRow[4]:setColSpan(totalCols - 3):createDropDown(bestTradeSortOptions(), {
+    startOption = tradeTab.settings.bestSort,
+    active = true,
+    height = rowHeight,
+  }):setTextProperties({ fontsize = fontSize })
+  sortRow[4].handlers.onDropDownConfirmed = function(_, id)
+    tradeTab.menuMap.noupdate = false
+    tradeTab.settings.bestSort = id
+    refresh()
+  end
+  sortRow[4].handlers.onDropDownActivated = function()
+    tradeTab.menuMap.noupdate = true
+  end
 
   local columnsTitle = objecttable:addRow("trade_settings_columns_title", {
     fixed = true,
@@ -414,19 +445,37 @@ function renderSettingsMockup(objecttable, maxIcons)
     font = Helper.standardFontBold,
   })
 
-  local columnsRow = objecttable:addRow("trade_settings_columns", { fixed = true, interactive = false })
-  columnsRow[1]:setColSpan(2):createText("Trip", { fontsize = fontSize })
-  columnsRow[3]:setColSpan(2):createText("Jumps", { fontsize = fontSize })
-  columnsRow[5]:setColSpan(2):createText("Buy/Sell", { fontsize = fontSize })
-  columnsRow[7]:setColSpan(2):createText("Profit", { fontsize = fontSize })
-  columnsRow[9]:setColSpan(2):createText("$/Jump", { fontsize = fontSize })
+  local columnDefinitions = {
+    { key = "trip", text = "Trip", tip = "Show the one-trip amount column." },
+    { key = "jumps", text = "Jumps", tip = "Show route gate distance." },
+    { key = "buySell", text = "Buy/Sell", tip = "Show source buy and destination sell prices." },
+    { key = "profit", text = "Profit", tip = "Show total one-trip profit." },
+    { key = "profitPerJump", text = "$/Jump", tip = "Show profit divided by route jumps." },
+  }
+  local rowsAdded = 3
+  for _, column in ipairs(columnDefinitions) do
+    local row = objecttable:addRow("trade_settings_column_" .. column.key, { fixed = true })
+    local enabled = isBestColumnVisible(column.key)
+    row[1]:setColSpan(6):createText(column.text, {
+      fontsize = fontSize,
+      mouseOverText = column.tip,
+    })
+    row[7]:setColSpan(4):createButton({
+      active = true,
+      height = rowHeight,
+      mouseOverText = column.tip,
+    }):setText(enabled and "Shown" or "Hidden", {
+      fontsize = fontSize,
+      halign = "center",
+      color = enabled and Color["text_positive"] or (Color["text_inactive"] or Color["text_normal"]),
+    })
+    row[7].handlers.onClick = function()
+      tradeTab.menuMap.noupdate = false
+      toggleBestColumn(column.key)
+      refresh()
+    end
+    rowsAdded = rowsAdded + 1
+  end
 
-  local noteRow = objecttable:addRow("trade_settings_note", { fixed = true, interactive = false })
-  noteRow[1]:setColSpan(totalCols):createText("Mockup only: these controls are placeholders for the next pass.", {
-    fontsize = fontSize,
-    color = Color["text_inactive"] or Color["text_normal"],
-  })
-
-  return 5
+  return rowsAdded
 end
-

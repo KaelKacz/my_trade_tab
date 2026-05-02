@@ -64,37 +64,54 @@ function renderStationRow(objecttable, station, maxIcons, numDisplayed, frameCac
           interactive = false,
           bgColor = wareRowBackground(detailRowIndex),
         })
-        wareRow[1]:setColSpan(4):createText(
+        local visibleValueCols = bestTradeVisibleValueColumnCount()
+        local nextCol = totalCols - visibleValueCols + 1
+        wareRow[1]:setColSpan(totalCols - visibleValueCols):createText(
           trimText(indentText(2, wareName(tradeRow.ware)), 40),
           {
             color = tradeRow.isIllegal and (Color["text_illegal"] or Color["text_warning"]) or Color["text_normal"],
             mouseOverText = tradeRow.isIllegal and "Illegal ware in at least one endpoint sector." or nil,
           }
         )
-        wareRow[5]:createText(
-          tripAmountText(tradeRow.tripAmount, tradeRow.amount),
-          { halign = "right", color = Color["text_normal"], mouseOverText = tripAmountMouseOverText(tradeRow.tripAmount, tradeRow.amount) }
-        )
-        wareRow[6]:createText(
-          jumpsText(tradeRow.routeDistance),
-          { halign = "right", color = Color["text_normal"] }
-        )
-        wareRow[7]:createText(
-          compactMoneyText(tradeRow.buyPrice),
-          { halign = "right", color = Color["text_normal"], mouseOverText = exactMoneyText(tradeRow.buyPrice) }
-        )
-        wareRow[8]:createText(
-          compactMoneyText(tradeRow.sellPrice),
-          { halign = "right", color = Color["text_normal"], mouseOverText = exactMoneyText(tradeRow.sellPrice) }
-        )
-        wareRow[9]:createText(
-          totalProfitText(tradeRow.buyPrice, tradeRow.sellPrice, tradeRow.tripAmount),
-          { halign = "right", color = Color["text_positive"], mouseOverText = exactMoneyText(totalProfitValue(tradeRow.buyPrice, tradeRow.sellPrice, tradeRow.tripAmount)) }
-        )
-        wareRow[10]:createText(
-          profitPerJumpText(tradeRow.buyPrice, tradeRow.sellPrice, tradeRow.tripAmount, tradeRow.routeDistance),
-          { halign = "right", color = Color["text_positive"], mouseOverText = ((tonumber(tradeRow.routeDistance) == nil) and "-" or exactMoneyText(profitPerJumpValue(tradeRow.buyPrice, tradeRow.sellPrice, tradeRow.tripAmount, tradeRow.routeDistance))) }
-        )
+        if isBestColumnVisible("trip") then
+          wareRow[nextCol]:createText(
+            tripAmountText(tradeRow.tripAmount, tradeRow.amount),
+            { halign = "right", color = Color["text_normal"], mouseOverText = tripAmountMouseOverText(tradeRow.tripAmount, tradeRow.amount) }
+          )
+          nextCol = nextCol + 1
+        end
+        if isBestColumnVisible("jumps") then
+          wareRow[nextCol]:createText(
+            jumpsText(tradeRow.routeDistance),
+            { halign = "right", color = Color["text_normal"] }
+          )
+          nextCol = nextCol + 1
+        end
+        if isBestColumnVisible("buySell") then
+          wareRow[nextCol]:createText(
+            compactMoneyText(tradeRow.buyPrice),
+            { halign = "right", color = Color["text_normal"], mouseOverText = exactMoneyText(tradeRow.buyPrice) }
+          )
+          nextCol = nextCol + 1
+          wareRow[nextCol]:createText(
+            compactMoneyText(tradeRow.sellPrice),
+            { halign = "right", color = Color["text_normal"], mouseOverText = exactMoneyText(tradeRow.sellPrice) }
+          )
+          nextCol = nextCol + 1
+        end
+        if isBestColumnVisible("profit") then
+          wareRow[nextCol]:createText(
+            totalProfitText(tradeRow.buyPrice, tradeRow.sellPrice, tradeRow.tripAmount),
+            { halign = "right", color = Color["text_positive"], mouseOverText = exactMoneyText(totalProfitValue(tradeRow.buyPrice, tradeRow.sellPrice, tradeRow.tripAmount)) }
+          )
+          nextCol = nextCol + 1
+        end
+        if isBestColumnVisible("profitPerJump") then
+          wareRow[nextCol]:createText(
+            profitPerJumpText(tradeRow.buyPrice, tradeRow.sellPrice, tradeRow.tripAmount, tradeRow.routeDistance),
+            { halign = "right", color = Color["text_positive"], mouseOverText = ((tonumber(tradeRow.routeDistance) == nil) and "-" or exactMoneyText(profitPerJumpValue(tradeRow.buyPrice, tradeRow.sellPrice, tradeRow.tripAmount, tradeRow.routeDistance))) }
+          )
+        end
         numDisplayed = numDisplayed + 1
       end
     end

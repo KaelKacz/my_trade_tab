@@ -53,6 +53,10 @@ Large numbers are compacted in the table, and the exact values are available in 
 
 The **Refresh Trade Data** button rebuilds the cached dataset manually. The tab also marks the dataset dirty when the registry reports changed station data.
 
+## Settings
+
+The **Settings** tab controls Best Trades presentation. It can change the primary Best Trades sort between `$/Jump`, Trip Profit, Trip Amount, and Route Distance, and can show or hide the Best Trades Trip, Jumps, Buy/Sell, Profit, and `$/Jump` columns.
+
 ## How It Works
 
 The mod is split between Lua UI code and a small Mission Director registry:

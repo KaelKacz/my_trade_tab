@@ -38,6 +38,16 @@ tradeTab = {
     leftTopRow = nil,
     rightTopRow = nil,
   },
+  settings = {
+    bestSort = "profitPerJump",
+    bestColumns = {
+      trip = true,
+      jumps = true,
+      buySell = true,
+      profit = true,
+      profitPerJump = true,
+    },
+  },
   filters = {
     mode = "best",
     ware = "__all__",

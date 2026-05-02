@@ -147,7 +147,7 @@ function createTradeFrame(frame, side)
     })
 
     if tradeTab.activeTab == "settings" then
-      renderSettingsMockup(objecttable, 6)
+      renderSettings(objecttable, 6)
       titleRow[7]:setColSpan(4):createText("Settings", {
         color = Color["text_normal"],
         halign = "right",
@@ -172,18 +172,18 @@ function createTradeFrame(frame, side)
         table.insert(stationsToRender, station)
       end
       table.sort(stationsToRender, function(a, b)
-        local aPpj, aProfit, aTrip = getBestStationScore(a, frameCache)
-        local bPpj, bProfit, bTrip = getBestStationScore(b, frameCache)
-        if aPpj == bPpj then
-          if aProfit == bProfit then
-            if aTrip == bTrip then
-              return a.name < b.name
-            end
-            return aTrip > bTrip
-          end
-          return aProfit > bProfit
+        local aRows = buildBestTradeRowsForStation(a, frameCache)
+        local bRows = buildBestTradeRowsForStation(b, frameCache)
+        if not aRows[1] then
+          return false
         end
-        return aPpj > bPpj
+        if not bRows[1] then
+          return true
+        end
+        if not compareBestTradeRows(aRows[1], bRows[1]) and not compareBestTradeRows(bRows[1], aRows[1]) then
+          return a.name < b.name
+        end
+        return compareBestTradeRows(aRows[1], bRows[1])
       end)
     elseif (tradeTab.filters.mode == "sells") or (tradeTab.filters.mode == "buys") then
       stationsToRender = {}
